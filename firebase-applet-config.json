@@ -1,12 +1,9 @@
 {
-  "projectId": "leafy-district-r7cdj",
-  "appId": "1:821387062720:web:0eb7c780641c4dd7cdac25",
-  "apiKey": "AIzaSyC_o4pGk_90c6CO0j3g0Emo5TeBPmy9NEQ",
-  "authDomain": "leafy-district-r7cdj.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-da60b980-5b50-4b8f-84c0-82ead4d2dcf9",
-  "storageBucket": "leafy-district-r7cdj.firebasestorage.app",
-  "messagingSenderId": "821387062720",
-  "measurementId": "",
-  "oAuthClientId": "821387062720-8npv5pj8r579qp8dhb9vefn1pnkvobnl.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
+  "apiKey": "AIzaSyCwKJ5J3rklJjnUdJMtO9OMrZ8KtoQMyeY",
+  "authDomain": "softlynx-b52bd.firebaseapp.com",
+  "projectId": "softlynx-b52bd",
+  "storageBucket": "softlynx-b52bd.firebasestorage.app",
+  "messagingSenderId": "749934678660",
+  "appId": "1:749934678660:web:c29de4c55d6ac53c9668d1",
+  "measurementId": "G-7V8PKV40CC"
 }
