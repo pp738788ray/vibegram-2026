@@ -1,0 +1,6 @@
+{
+  "name": "Softlynx",
+  "description": "Next-generation AMOLED dark-mode social platform with vertical capsule stories, mood-filtered feeds, voice comments, voice bios, sparks, and inner circle sharing.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

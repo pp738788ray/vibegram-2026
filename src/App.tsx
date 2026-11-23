@@ -1,0 +1,774 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
+import { Globe, Lock, MessageCircle, Plus, Sparkles } from 'lucide-react';
+import { auth } from './lib/firebase';
+import {
+  createFirestoreComment,
+  createFirestorePost,
+  createFirestoreStory,
+  deleteFirestorePost,
+  fetchUserPrivate,
+  fetchUserProfile,
+  makeChatId,
+  reactFirestoreMessage,
+  saveUserPrivateOnly,
+  saveUserProfile,
+  sendFirestoreMessage,
+  subscribeToChats,
+  subscribeToDiscoverableUsers,
+  subscribeToPosts,
+  subscribeToStories,
+  toggleFirestorePostLike,
+  updateTargetFollowersCount,
+  type RawChatDoc,
+} from './lib/firestoreSync';
+import { AuthOnboarding } from './components/AuthOnboarding';
+import { VerticalCapsuleStories } from './components/VerticalCapsuleStories';
+import { StoryViewerModal } from './components/StoryViewerModal';
+import { FeedPostCard } from './components/FeedPostCard';
+import { CommentDrawer } from './components/CommentDrawer';
+import { CreateModal } from './components/CreateModal';
+import { SparksView } from './components/SparksView';
+import { ExploreView } from './components/ExploreView';
+import { DirectMessagesModal } from './components/DirectMessagesModal';
+import { ProfileView } from './components/ProfileView';
+import { FloatingBottomDock } from './components/FloatingBottomDock';
+import { SplashScreen } from './components/SplashScreen';
+import type {
+  ActiveTab,
+  ChatThread,
+  CommentItem,
+  CreatorProfile,
+  FeedScope,
+  MoodFilter,
+  PostItem,
+  StoryItem,
+  UserPrivateState,
+} from './types';
+
+const MOOD_FILTERS: MoodFilter[] = ['All', 'Desi', 'Music', 'Chill', 'Gaming', 'Tech', 'Aesthetic'];
+
+export default function App() {
+  const [showSplash, setShowSplash] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
+  const [pendingFirebaseUser, setPendingFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<CreatorProfile | null>(null);
+  const [userPrivate, setUserPrivate] = useState<UserPrivateState>({
+    email: '',
+    innerCircleIds: [],
+    bookmarkedPostIds: [],
+    likedPostIds: [],
+    followingIds: [],
+  });
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>('home');
+  const [feedScope, setFeedScope] = useState<FeedScope>('public');
+  const [moodFilter, setMoodFilter] = useState<MoodFilter>('All');
+
+  // 100% Real Firestore Live Collections (Zero fake/mock arrays)
+  const [rawCreators, setRawCreators] = useState<CreatorProfile[]>([]);
+  const [rawStories, setRawStories] = useState<StoryItem[]>([]);
+  const [rawPosts, setRawPosts] = useState<PostItem[]>([]);
+  const [rawChats, setRawChats] = useState<RawChatDoc[]>([]);
+  const [seenStoryIds, setSeenStoryIds] = useState<Set<string>>(new Set());
+  const [draftThreads, setDraftThreads] = useState<ChatThread[]>([]);
+
+  // Modals & Overlays
+  const [viewingStoryIndex, setViewingStoryIndex] = useState<number | null>(null);
+  const [activeCommentPostId, setActiveCommentPostId] = useState<string | null>(null);
+  const [createMode, setCreateMode] = useState<'post' | 'story' | null>(null);
+  const [dmOpen, setDmOpen] = useState(false);
+  const [dmInitialThreadId, setDmInitialThreadId] = useState<string | null>(null);
+  const [inspectedCreatorId, setInspectedCreatorId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    window.setTimeout(() => {
+      setToast((prev) => (prev === message ? null : prev));
+    }, 2600);
+  }, []);
+
+  // 0. 2-Second Animated VibeGram Splash Screen on Launch
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setShowSplash(false);
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // 1. Firebase Auth state listener
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        setPendingFirebaseUser(null);
+        setCurrentUser(null);
+        setRawCreators([]);
+        setRawPosts([]);
+        setRawStories([]);
+        setRawChats([]);
+        setAuthReady(true);
+        return;
+      }
+
+      try {
+        const existingProfile = await fetchUserProfile(fbUser.uid);
+        if (existingProfile) {
+          const existingPriv = (await fetchUserPrivate(fbUser.uid)) || {
+            email: fbUser.email || '',
+            innerCircleIds: [],
+            bookmarkedPostIds: [],
+            likedPostIds: [],
+            followingIds: [],
+          };
+          setCurrentUser(existingProfile);
+          setUserPrivate(existingPriv);
+          setPendingFirebaseUser(null);
+        } else {
+          setPendingFirebaseUser(fbUser);
+          setCurrentUser(null);
+        }
+      } catch {
+        setPendingFirebaseUser(fbUser);
+      } finally {
+        setAuthReady(true);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // 2. Real-time Firestore Subscriptions (only active when signed in with a real profile)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const unsubUsers = subscribeToDiscoverableUsers((users) => {
+      setRawCreators(users);
+      const mine = users.find((u) => u.uid === currentUser.uid);
+      if (mine) {
+        setCurrentUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                followersCount: mine.followersCount,
+                followingCount: mine.followingCount,
+              }
+            : mine,
+        );
+      }
+    });
+
+    const unsubPosts = subscribeToPosts(currentUser.uid, setRawPosts);
+    const unsubStories = subscribeToStories(currentUser.uid, setRawStories);
+    const unsubChats = subscribeToChats(currentUser.uid, setRawChats);
+
+    return () => {
+      unsubUsers();
+      unsubPosts();
+      unsubStories();
+      unsubChats();
+    };
+  }, [currentUser?.uid]);
+
+  const handleAuthComplete = (profile: CreatorProfile, priv: UserPrivateState) => {
+    setCurrentUser(profile);
+    setUserPrivate(priv);
+    setPendingFirebaseUser(null);
+    showToast(`Welcome to VibeGram, @${profile.handle}`);
+  };
+
+  const handleSignOut = async () => {
+    await signOut(auth);
+    setCurrentUser(null);
+    setPendingFirebaseUser(null);
+    setActiveTab('home');
+    setInspectedCreatorId(null);
+    setDmOpen(false);
+  };
+
+  // Enrich real Firestore collections with the signed-in user's private state (likes, bookmarks, follows, inner circle)
+  const followingSet = useMemo(() => new Set(userPrivate.followingIds), [userPrivate.followingIds]);
+  const innerCircleSet = useMemo(() => new Set(userPrivate.innerCircleIds), [userPrivate.innerCircleIds]);
+  const bookmarkSet = useMemo(() => new Set(userPrivate.bookmarkedPostIds), [userPrivate.bookmarkedPostIds]);
+  const likedSet = useMemo(() => new Set(userPrivate.likedPostIds), [userPrivate.likedPostIds]);
+
+  const creators = useMemo(
+    () =>
+      rawCreators.map((c) => ({
+        ...c,
+        isFollowing: followingSet.has(c.uid),
+        isInnerCircle: innerCircleSet.has(c.uid),
+      })),
+    [rawCreators, followingSet, innerCircleSet],
+  );
+
+  const posts = useMemo(
+    () =>
+      rawPosts.map((p) => ({
+        ...p,
+        isLiked: likedSet.has(p.id),
+        isBookmarked: bookmarkSet.has(p.id),
+      })),
+    [rawPosts, likedSet, bookmarkSet],
+  );
+
+  const stories = useMemo(
+    () =>
+      rawStories.map((s) => ({
+        ...s,
+        isSeen: seenStoryIds.has(s.id),
+      })),
+    [rawStories, seenStoryIds],
+  );
+
+  const chats = useMemo<ChatThread[]>(() => {
+    if (!currentUser) return [];
+    const byId = new Map<string, ChatThread>();
+
+    rawChats.forEach((raw) => {
+      const otherUid = raw.participantIds.find((id) => id !== currentUser.uid) || currentUser.uid;
+      const participant =
+        creators.find((c) => c.uid === otherUid) || {
+          uid: otherUid,
+          handle: 'member',
+          displayName: 'VibeGram Member',
+          bio: '',
+          location: '',
+          avatarUrl: '',
+          auraBadge: '⚡ Trendsetter',
+          auraBorder: 'sunset',
+          voiceBioTranscript: '',
+          voiceBioDuration: 0,
+          voiceBioWaveform: [],
+          followersCount: 0,
+          followingCount: 0,
+          sparksCount: 0,
+        };
+      byId.set(raw.id, {
+        id: raw.id,
+        participantIds: raw.participantIds,
+        participant,
+        lastMessage: raw.lastMessage,
+        unreadCount: 0,
+        messages: [],
+        updatedAt: raw.updatedAt,
+      });
+    });
+
+    draftThreads.forEach((dt) => {
+      if (!byId.has(dt.id)) byId.set(dt.id, dt);
+    });
+
+    return Array.from(byId.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [rawChats, draftThreads, creators, currentUser]);
+
+  const visibleStories = useMemo(() => {
+    if (feedScope === 'public') return stories;
+    return stories.filter(
+      (s) =>
+        s.visibility === 'inner_circle' ||
+        innerCircleSet.has(s.authorId) ||
+        s.authorId === currentUser?.uid,
+    );
+  }, [stories, feedScope, innerCircleSet, currentUser?.uid]);
+
+  const filteredPosts = useMemo(() => {
+    return posts.filter((post) => {
+      const scopeMatch =
+        feedScope === 'public'
+          ? post.visibility === 'public' || post.authorId === currentUser?.uid
+          : post.visibility === 'inner_circle' ||
+            innerCircleSet.has(post.authorId) ||
+            post.authorId === currentUser?.uid;
+      const moodMatch = moodFilter === 'All' || post.mood === moodFilter;
+      return scopeMatch && moodMatch;
+    });
+  }, [posts, feedScope, moodFilter, innerCircleSet, currentUser?.uid]);
+
+  const videoSparks = useMemo(
+    () => posts.filter((p) => p.mediaType === 'video'),
+    [posts],
+  );
+
+  // --- Real Firestore Mutations ---
+
+  const handleToggleLikePost = async (postId: string) => {
+    if (!currentUser) return;
+    const alreadyLiked = likedSet.has(postId);
+    const nextLiked = alreadyLiked
+      ? userPrivate.likedPostIds.filter((id) => id !== postId)
+      : [...userPrivate.likedPostIds, postId];
+
+    const nextPriv = { ...userPrivate, likedPostIds: nextLiked };
+    setUserPrivate(nextPriv);
+
+    await Promise.all([
+      toggleFirestorePostLike(postId, alreadyLiked ? -1 : 1),
+      saveUserPrivateOnly(currentUser.uid, nextPriv),
+    ]);
+  };
+
+  const handleToggleBookmarkPost = async (postId: string) => {
+    if (!currentUser) return;
+    const alreadySaved = bookmarkSet.has(postId);
+    const nextSaved = alreadySaved
+      ? userPrivate.bookmarkedPostIds.filter((id) => id !== postId)
+      : [...userPrivate.bookmarkedPostIds, postId];
+
+    const nextPriv = { ...userPrivate, bookmarkedPostIds: nextSaved };
+    setUserPrivate(nextPriv);
+    await saveUserPrivateOnly(currentUser.uid, nextPriv);
+    showToast(alreadySaved ? 'Removed from Bookmarks' : 'Saved to Bookmarks');
+  };
+
+  const handlePublishPost = async (post: PostItem) => {
+    await createFirestorePost(post);
+    setActiveTab('home');
+    if (post.visibility === 'inner_circle') {
+      setFeedScope('inner_circle');
+    }
+    showToast(
+      post.visibility === 'inner_circle'
+        ? 'Shared with Inner Circle!'
+        : 'Published!',
+    );
+  };
+
+  const handleDeletePost = async (postId: string) => {
+    await deleteFirestorePost(postId);
+    showToast('Post deleted');
+  };
+
+  const handlePublishStory = async (story: StoryItem) => {
+    await createFirestoreStory(story);
+    setActiveTab('home');
+    showToast('Story shared!');
+  };
+
+  const handleAddComment = async (postId: string, comment: CommentItem) => {
+    await createFirestoreComment(postId, comment);
+    showToast(comment.type === 'voice' ? 'Voice note posted!' : 'Comment posted!');
+  };
+
+  const handleMarkStorySeen = useCallback((storyId: string) => {
+    setSeenStoryIds((prev) => {
+      if (prev.has(storyId)) return prev;
+      const next = new Set(prev);
+      next.add(storyId);
+      return next;
+    });
+  }, []);
+
+  const handleToggleFollow = async (targetUid: string) => {
+    if (!currentUser || targetUid === currentUser.uid) return;
+    const isFollowing = followingSet.has(targetUid);
+    const nextFollowingIds = isFollowing
+      ? userPrivate.followingIds.filter((id) => id !== targetUid)
+      : [...userPrivate.followingIds, targetUid];
+
+    const nextPriv = { ...userPrivate, followingIds: nextFollowingIds };
+    const nextProfile: CreatorProfile = {
+      ...currentUser,
+      followingCount: nextFollowingIds.length,
+    };
+
+    setUserPrivate(nextPriv);
+    setCurrentUser(nextProfile);
+
+    await Promise.all([
+      saveUserProfile(nextProfile, nextPriv),
+      updateTargetFollowersCount(targetUid, isFollowing ? -1 : 1),
+    ]);
+  };
+
+  const handleToggleInnerCircleMember = async (targetUid: string) => {
+    if (!currentUser) return;
+    const isMember = innerCircleSet.has(targetUid);
+    const nextCircle = isMember
+      ? userPrivate.innerCircleIds.filter((id) => id !== targetUid)
+      : [...userPrivate.innerCircleIds, targetUid];
+
+    const nextPriv = { ...userPrivate, innerCircleIds: nextCircle };
+    setUserPrivate(nextPriv);
+    await saveUserPrivateOnly(currentUser.uid, nextPriv);
+  };
+
+  const handleUpdateCurrentUser = async (updates: Partial<CreatorProfile>) => {
+    if (!currentUser) return;
+    const nextProfile: CreatorProfile = { ...currentUser, ...updates };
+    setCurrentUser(nextProfile);
+    await saveUserProfile(nextProfile, userPrivate);
+    showToast('Changes saved!');
+  };
+
+  const handleOpenDMWith = (creator: CreatorProfile) => {
+    if (!currentUser || creator.uid === currentUser.uid) return;
+    const chatId = makeChatId(currentUser.uid, creator.uid);
+    const exists = chats.some((c) => c.id === chatId);
+    if (!exists) {
+      setDraftThreads((prev) => [
+        {
+          id: chatId,
+          participantIds: [currentUser.uid, creator.uid].sort(),
+          participant: creator,
+          lastMessage: '',
+          unreadCount: 0,
+          messages: [],
+          updatedAt: Date.now(),
+        },
+        ...prev,
+      ]);
+    }
+    setDmInitialThreadId(chatId);
+    setDmOpen(true);
+  };
+
+  const handleSendMessage = async (thread: ChatThread, text: string) => {
+    if (!currentUser) return;
+    await sendFirestoreMessage(thread.id, thread.participantIds, currentUser.uid, text);
+  };
+
+  const handleReactMessage = async (chatId: string, messageId: string, emoji: string) => {
+    await reactFirestoreMessage(chatId, messageId, emoji);
+  };
+
+  const handleReplyToStory = (story: StoryItem, text: string) => {
+    if (!currentUser || story.authorId === currentUser.uid) {
+      showToast('Reply sent');
+      return;
+    }
+    const chatId = makeChatId(currentUser.uid, story.authorId);
+    const participantIds = [currentUser.uid, story.authorId].sort();
+    void sendFirestoreMessage(chatId, participantIds, currentUser.uid, `[Capsule reply] ${text}`);
+    showToast(`Sent to @${story.authorHandle}`);
+  };
+
+  const handleShare = (label: string) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      void navigator.clipboard.writeText(window.location.href).catch(() => {});
+    }
+    showToast(`Link copied for ${label}`);
+  };
+
+  const handleInspectCreator = (authorId: string) => {
+    if (currentUser && authorId === currentUser.uid) {
+      setInspectedCreatorId(null);
+      setActiveTab('profile');
+      return;
+    }
+    setInspectedCreatorId(authorId);
+  };
+
+  const activeCommentPost = posts.find((p) => p.id === activeCommentPostId) || null;
+  const inspectedCreator = creators.find((c) => c.uid === inspectedCreatorId) || null;
+
+  return (
+    <div className="min-h-dvh w-full bg-[#020204] text-zinc-100 flex items-center justify-center md:p-5 overflow-hidden">
+      <div
+        className="pointer-events-none fixed inset-0 hidden md:block"
+        style={{
+          background:
+            'radial-gradient(circle at 22% 18%, rgba(255, 107, 53, 0.11), transparent 42%), radial-gradient(circle at 50% 52%, rgba(255, 46, 147, 0.08), transparent 46%), radial-gradient(circle at 78% 82%, rgba(123, 44, 191, 0.14), transparent 45%)',
+        }}
+      />
+
+      <main className="relative w-full h-dvh md:w-[430px] md:h-[min(892px,94dvh)] bg-[#050505] md:rounded-[44px] md:border md:border-white/[0.12] md:shadow-[0_32px_100px_-16px_rgba(0,0,0,0.95),0_0_60px_-24px_rgba(255,46,147,0.22)] overflow-hidden flex flex-col">
+        {!authReady ? (
+          <div className="h-full w-full flex flex-col items-center justify-center gap-3 bg-[#050505]">
+            <img
+              src="/assets/vibegram-icon.png"
+              alt="VibeGram"
+              className="w-12 h-12 rounded-2xl object-cover animate-pulse shadow-[0_8px_24px_-4px_rgba(255,46,147,0.55)]"
+            />
+            <p className="text-xs text-zinc-400">Connecting to VibeGram…</p>
+          </div>
+        ) : !currentUser ? (
+          <AuthOnboarding
+            pendingFirebaseUser={pendingFirebaseUser}
+            onComplete={handleAuthComplete}
+          />
+        ) : (
+          <>
+            <div className="relative flex-1 min-h-0 overflow-hidden">
+              {inspectedCreator ? (
+                <ProfileView
+                  profile={inspectedCreator}
+                  isOwnProfile={false}
+                  posts={posts}
+                  bookmarkedPosts={[]}
+                  creators={creators}
+                  onBack={() => setInspectedCreatorId(null)}
+                  onUpdateProfile={async () => {}}
+                  onToggleFollow={handleToggleFollow}
+                  onToggleInnerCircleMember={handleToggleInnerCircleMember}
+                  onOpenDM={handleOpenDMWith}
+                  onOpenPost={(post) => setActiveCommentPostId(post.id)}
+                  onSignOut={handleSignOut}
+                />
+              ) : activeTab === 'home' ? (
+                <div className="h-full overflow-y-auto no-scrollbar pb-28">
+                  {/* Top Header */}
+                  <header className="sticky top-0 z-30 h-14 px-4 bg-[#050505]/86 backdrop-blur-xl border-b border-white/[0.06] flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <img
+                        src="/assets/vibegram-icon.png"
+                        alt="VibeGram"
+                        className="w-7 h-7 rounded-lg object-cover shadow-[0_4px_14px_-2px_rgba(255,46,147,0.5)]"
+                      />
+                      <span className="font-display text-base font-bold tracking-tight text-white">
+                        VibeGram
+                      </span>
+                    </div>
+
+                    {/* Public vs. Inner Circle Toggle */}
+                    <div
+                      role="tablist"
+                      aria-label="Feed audience scope"
+                      className="flex items-center p-1 rounded-full bg-white/[0.06] border border-white/10"
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={feedScope === 'public'}
+                        onClick={() => setFeedScope('public')}
+                        className={`h-7 px-2.5 rounded-full text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap transition-all cursor-pointer ${
+                          feedScope === 'public'
+                            ? 'vibe-gradient-bg text-white shadow-[0_0_14px_rgba(255,46,147,0.45)]'
+                            : 'text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        <Globe className="w-3 h-3" />
+                        Public
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={feedScope === 'inner_circle'}
+                        onClick={() => setFeedScope('inner_circle')}
+                        className={`h-7 px-2.5 rounded-full text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap transition-all cursor-pointer ${
+                          feedScope === 'inner_circle'
+                            ? 'bg-[#7B2CBF] text-white shadow-[0_0_14px_rgba(123,44,191,0.65)]'
+                            : 'text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        <Lock className="w-3 h-3" />
+                        Circle
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDmInitialThreadId(null);
+                        setDmOpen(true);
+                      }}
+                      aria-label="Open Direct Messages"
+                      className="relative w-10 h-10 rounded-full bg-white/[0.06] border border-white/10 flex items-center justify-center text-white hover:bg-white/12 active:scale-95 transition-all cursor-pointer shrink-0"
+                    >
+                      <MessageCircle className="w-5 h-5" />
+                    </button>
+                  </header>
+
+                  {/* 1. REAL VERTICAL CAPSULE STORIES */}
+                  <VerticalCapsuleStories
+                    currentUser={currentUser}
+                    stories={visibleStories}
+                    onOpenStory={(index) => setViewingStoryIndex(index)}
+                    onCreateStory={() => setCreateMode('story')}
+                  />
+
+                  {/* 2. MOOD / VIBE FEED FILTER PILLS */}
+                  <div
+                    aria-label="Filter feed by mood"
+                    className="flex items-center gap-2 overflow-x-auto no-scrollbar px-4 pb-3.5"
+                  >
+                    {MOOD_FILTERS.map((mood) => {
+                      const active = moodFilter === mood;
+                      return (
+                        <button
+                          key={mood}
+                          type="button"
+                          onClick={() => setMoodFilter(mood)}
+                          className={`shrink-0 h-8 px-3.5 rounded-full text-xs font-medium whitespace-nowrap transition-all cursor-pointer ${
+                            active
+                              ? 'vibe-gradient-bg text-white font-semibold shadow-[0_6px_18px_-6px_rgba(255,46,147,0.55)]'
+                              : 'bg-white/[0.06] text-zinc-300 border border-white/10 hover:text-white hover:bg-white/10'
+                          }`}
+                        >
+                          {mood}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* 3. REAL FIRESTORE FEED */}
+                  <div className="space-y-4">
+                    {filteredPosts.length === 0 ? (
+                      <div className="mx-4 rounded-[28px] glass-surface p-8 text-center space-y-4">
+                        <div className="w-14 h-14 rounded-2xl mx-auto bg-white/[0.05] border border-white/10 flex items-center justify-center text-[#FF6B35]">
+                          <Sparkles className="w-6 h-6" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <p className="font-display text-base font-semibold text-white">
+                            {moodFilter !== 'All'
+                              ? `No ${moodFilter} drops yet`
+                              : feedScope === 'inner_circle'
+                                ? 'Your Inner Circle is quiet'
+                                : 'Your live feed is empty'}
+                          </p>
+                          <p className="text-xs text-zinc-400 leading-relaxed max-w-[260px] mx-auto">
+                            Tap Create (+) to upload your first photo or video and share it on VibeGram.
+                          </p>
+                        </div>
+                        <div className="flex items-center justify-center gap-2 pt-1">
+                          {moodFilter !== 'All' && (
+                            <button
+                              type="button"
+                              onClick={() => setMoodFilter('All')}
+                              className="h-10 px-4 rounded-xl bg-white/[0.07] text-zinc-200 text-xs font-semibold cursor-pointer"
+                            >
+                              Show All Moods
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setCreateMode('post')}
+                            className="h-10 px-4 rounded-xl vibe-gradient-bg text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-[0_8px_20px_-6px_rgba(255,46,147,0.55)] cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Create First Post
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      filteredPosts.map((post) => (
+                        <FeedPostCard
+                          key={post.id}
+                          post={post}
+                          isOwnPost={post.authorId === currentUser.uid}
+                          onToggleLike={handleToggleLikePost}
+                          onToggleBookmark={handleToggleBookmarkPost}
+                          onOpenComments={(p) => setActiveCommentPostId(p.id)}
+                          onShare={(p) => handleShare(`@${p.authorHandle}'s post`)}
+                          onDeletePost={handleDeletePost}
+                          onInspectCreator={handleInspectCreator}
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : activeTab === 'explore' ? (
+                <ExploreView
+                  currentUserId={currentUser.uid}
+                  creators={creators}
+                  posts={posts}
+                  onToggleFollow={handleToggleFollow}
+                  onInspectCreator={handleInspectCreator}
+                  onOpenDMWith={handleOpenDMWith}
+                  onOpenComments={(p) => setActiveCommentPostId(p.id)}
+                />
+              ) : activeTab === 'sparks' ? (
+                <SparksView
+                  videoPosts={videoSparks}
+                  onToggleLike={handleToggleLikePost}
+                  onToggleBookmark={handleToggleBookmarkPost}
+                  onOpenComments={(p) => setActiveCommentPostId(p.id)}
+                  onShare={(p) => handleShare(`@${p.authorHandle}'s Spark`)}
+                  onInspectCreator={handleInspectCreator}
+                  onOpenCreate={() => setCreateMode('post')}
+                />
+              ) : (
+                <ProfileView
+                  profile={currentUser}
+                  isOwnProfile
+                  posts={posts}
+                  bookmarkedPosts={posts.filter((p) => p.isBookmarked)}
+                  creators={creators}
+                  onUpdateProfile={handleUpdateCurrentUser}
+                  onToggleInnerCircleMember={handleToggleInnerCircleMember}
+                  onOpenPost={(p) => setActiveCommentPostId(p.id)}
+                  onSignOut={handleSignOut}
+                />
+              )}
+            </div>
+
+            <FloatingBottomDock
+              activeTab={activeTab}
+              onSelectTab={(tab) => {
+                setInspectedCreatorId(null);
+                setActiveTab(tab);
+              }}
+              onOpenCreate={() => setCreateMode('post')}
+            />
+
+            <AnimatePresence>
+              {viewingStoryIndex !== null && visibleStories.length > 0 && (
+                <StoryViewerModal
+                  stories={visibleStories}
+                  initialIndex={viewingStoryIndex}
+                  onClose={() => setViewingStoryIndex(null)}
+                  onMarkSeen={handleMarkStorySeen}
+                  onReplyToStory={handleReplyToStory}
+                />
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {activeCommentPost && (
+                <CommentDrawer
+                  post={activeCommentPost}
+                  currentUser={currentUser}
+                  onClose={() => setActiveCommentPostId(null)}
+                  onAddComment={handleAddComment}
+                />
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {createMode && (
+                <CreateModal
+                  currentUser={currentUser}
+                  initialMode={createMode}
+                  onClose={() => setCreateMode(null)}
+                  onPublishPost={handlePublishPost}
+                  onPublishStory={handlePublishStory}
+                />
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {dmOpen && (
+                <DirectMessagesModal
+                  currentUser={currentUser}
+                  threads={chats}
+                  initialThreadId={dmInitialThreadId}
+                  onClose={() => setDmOpen(false)}
+                  onSendMessage={handleSendMessage}
+                  onReactMessage={handleReactMessage}
+                />
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {toast && (
+                <motion.div
+                  initial={{ opacity: 0, y: -16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -16 }}
+                  className="pointer-events-none absolute top-16 inset-x-0 z-50 flex justify-center px-4"
+                >
+                  <div className="px-4 py-2 rounded-full bg-[#12121A]/95 border border-[#FF2E93]/40 text-xs font-medium text-white shadow-2xl backdrop-blur-xl">
+                    {toast}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+
+        {/* 2-Second Animated Splash Screen */}
+        <AnimatePresence>{showSplash && <SplashScreen />}</AnimatePresence>
+      </main>
+    </div>
+  );
+}
