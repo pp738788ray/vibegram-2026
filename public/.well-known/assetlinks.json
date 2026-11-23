@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.vercel.vibegram_2026.twa",
+      "sha256_cert_fingerprints": [
+        "B3:04:59:CE:C2:61:01:FA:EC:2F:D2:E4:0A:4D:DF:96:43:3B:B6:BD:99:8D:CA:C9:14:E4:0C:D9:C8:1C:16:27"
+      ]
+    }
+  }
+]
