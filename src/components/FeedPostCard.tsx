@@ -121,12 +121,35 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
         </div>
       </div>
 
-      {/* Media Surface with Double-Tap Neon Heart Burst */}
+      {/* Media Surface with Double-Tap Sunset-Neon Heart Burst */}
       <div
         onClick={handleMediaTap}
         onDoubleClick={triggerDoubleTapLike}
-        className="relative mx-2 rounded-[22px] overflow-hidden bg-[#0A0A0F] aspect-[4/5] cursor-pointer select-none"
+        className="relative mx-2 rounded-[22px] overflow-hidden bg-[#060609] aspect-[4/5] flex items-center justify-center cursor-pointer select-none"
       >
+        {/* Dark blurred ambient backdrop for landscape/tall media */}
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-[#060609]" aria-hidden="true">
+          {post.mediaType === 'video' ? (
+            <video
+              src={post.mediaUrl}
+              autoPlay
+              muted
+              loop
+              playsInline
+              tabIndex={-1}
+              className="w-full h-full object-cover scale-110 blur-2xl opacity-45 brightness-50"
+            />
+          ) : (
+            <SafeImage
+              src={post.mediaUrl}
+              alt=""
+              className="w-full h-full object-cover scale-110 blur-2xl opacity-45 brightness-50"
+            />
+          )}
+          <div className="absolute inset-0 bg-black/35" />
+        </div>
+
+        {/* Crisp full-frame foreground media (no side cropping) */}
         {post.mediaType === 'video' ? (
           <video
             src={post.mediaUrl}
@@ -134,14 +157,14 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
             muted={isMuted}
             loop
             playsInline
-            className="w-full h-full object-cover"
+            className="relative z-[1] w-full h-full object-contain"
           />
         ) : (
           <SafeImage
             src={post.mediaUrl}
             alt={post.caption || `Post by @${post.authorHandle}`}
             fallbackLabel={`@${post.authorHandle}`}
-            className="w-full h-full object-cover"
+            className="relative z-[1] w-full h-full object-contain"
           />
         )}
 
@@ -154,7 +177,7 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
               setIsMuted((prev) => !prev);
             }}
             aria-label={isMuted ? 'Unmute video' : 'Mute video'}
-            className="absolute bottom-3 right-3 w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-black/75 transition-colors cursor-pointer"
+            className="absolute bottom-3 right-3 z-10 w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-black/75 transition-colors cursor-pointer"
           >
             {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4 text-[#FF6B35]" />}
           </button>
@@ -168,7 +191,7 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
               animate={{ opacity: 1, scale: 1.05 }}
               exit={{ opacity: 0, scale: 1.35 }}
               transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-              className="pointer-events-none absolute inset-0 flex items-center justify-center"
+              className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
             >
               <div className="relative flex items-center justify-center">
                 <span className="absolute w-28 h-28 rounded-full border-2 border-[#FF6B35] animate-pulse-ring" />

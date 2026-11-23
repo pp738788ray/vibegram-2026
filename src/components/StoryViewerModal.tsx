@@ -99,7 +99,30 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
       className="absolute inset-0 z-50 bg-[#050505] flex flex-col select-none"
     >
       {/* Background media */}
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative flex-1 overflow-hidden bg-[#050505] flex items-center justify-center">
+        {/* Dark blurred ambient backdrop for non-9:16 aspect ratios */}
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-[#050505]" aria-hidden="true">
+          {story.mediaType === 'video' ? (
+            <video
+              src={story.mediaUrl}
+              autoPlay
+              muted
+              loop
+              playsInline
+              tabIndex={-1}
+              className="w-full h-full object-cover scale-110 blur-2xl opacity-45 brightness-50"
+            />
+          ) : (
+            <SafeImage
+              src={story.mediaUrl}
+              alt=""
+              className="w-full h-full object-cover scale-110 blur-2xl opacity-45 brightness-50"
+            />
+          )}
+          <div className="absolute inset-0 bg-black/35" />
+        </div>
+
+        {/* Crisp full-frame foreground media (no side cropping) */}
         {story.mediaType === 'video' ? (
           <video
             src={story.mediaUrl}
@@ -107,19 +130,19 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
             muted
             loop
             playsInline
-            className="w-full h-full object-cover"
+            className="relative z-[1] w-full h-full object-contain"
           />
         ) : (
           <SafeImage
             src={story.mediaUrl}
             alt={story.caption}
-            className="w-full h-full object-cover"
+            className="relative z-[1] w-full h-full object-contain"
           />
         )}
 
         {/* Top & bottom contrast scrims */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-black/85 via-black/40 to-transparent" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-52 bg-gradient-to-t from-black/95 via-black/55 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-[5] h-36 bg-gradient-to-b from-black/85 via-black/40 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[5] h-52 bg-gradient-to-t from-black/95 via-black/55 to-transparent" />
 
         {/* Progress bars */}
         <div className="absolute top-3 inset-x-3 z-20 flex items-center gap-1.5">
