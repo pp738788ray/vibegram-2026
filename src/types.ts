@@ -6,6 +6,7 @@ export type ActiveTab = 'home' | 'explore' | 'sparks' | 'profile';
 
 export interface CreatorProfile {
   uid: string;
+  email?: string;
   handle: string;
   displayName: string;
   bio: string;
@@ -82,8 +83,25 @@ export interface StoryItem {
   caption: string;
   mood: Mood;
   visibility: FeedScope;
+  viewedBy: string[];
+  likedBy: string[];
   isSeen: boolean;
   createdAt: number;
+}
+
+export type NotificationType = 'like' | 'comment' | 'follow';
+
+export interface NotificationItem {
+  id: string;
+  recipientId: string;
+  senderId: string;
+  senderName: string;
+  senderHandle: string;
+  senderAvatar: string;
+  type: NotificationType;
+  postId?: string;
+  createdAt: number;
+  read: boolean;
 }
 
 export interface ChatMessage {

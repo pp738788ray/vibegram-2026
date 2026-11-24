@@ -1,4 +1,6 @@
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -16,6 +18,8 @@ import type {
   ChatMessage,
   CommentItem,
   CreatorProfile,
+  NotificationItem,
+  NotificationType,
   PostItem,
   StoryItem,
   UserPrivateState,
@@ -35,6 +39,7 @@ function toMillis(ts: unknown): number {
 function mapUserDoc(uid: string, data: Record<string, unknown>): CreatorProfile {
   return {
     uid,
+    email: String(data.email || '') || undefined,
     handle: String(data.handle || 'vibe.user'),
     displayName: String(data.displayName || 'Creator'),
     bio: String(data.bio || ''),
@@ -90,6 +95,8 @@ function mapStoryDoc(id: string, data: Record<string, unknown>): StoryItem {
     caption: String(data.caption || ''),
     mood: (data.mood as StoryItem['mood']) || 'Desi',
     visibility: data.visibility === 'inner_circle' ? 'inner_circle' : 'public',
+    viewedBy: Array.isArray(data.viewedBy) ? (data.viewedBy as string[]) : [],
+    likedBy: Array.isArray(data.likedBy) ? (data.likedBy as string[]) : [],
     isSeen: false,
     createdAt: toMillis(data.createdAt),
   };
@@ -144,7 +151,10 @@ export async function saveUserProfile(
       .slice(0, 32);
     const cleanHandle = rawHandle.length >= 2 ? rawHandle : 'vibe.user';
 
+    const resolvedEmail = clampString(profile.email || priv.email || auth.currentUser.email || '', 200);
+
     const commonFields = {
+      email: resolvedEmail,
       handle: cleanHandle,
       displayName: clampString(profile.displayName || 'Creator', 60) || 'Creator',
       bio: clampString(profile.bio, 240),
@@ -457,10 +467,39 @@ export async function createFirestoreStory(story: StoryItem): Promise<void> {
       caption: clampString(story.caption, 200),
       mood: story.mood,
       visibility: story.visibility,
+      viewedBy: [],
+      likedBy: [],
       createdAt: serverTimestamp(),
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function recordFirestoreStoryView(storyId: string, viewerUid: string): Promise<void> {
+  if (!auth.currentUser || !viewerUid) return;
+  try {
+    await updateDoc(doc(db, 'stories', storyId), {
+      viewedBy: arrayUnion(viewerUid),
+    });
+  } catch {
+    // Non-blocking story view telemetry
+  }
+}
+
+export async function toggleFirestoreStoryLike(
+  storyId: string,
+  likerUid: string,
+  shouldLike: boolean,
+): Promise<void> {
+  if (!auth.currentUser || !likerUid) return;
+  const path = `stories/${storyId}`;
+  try {
+    await updateDoc(doc(db, 'stories', storyId), {
+      likedBy: shouldLike ? arrayUnion(likerUid) : arrayRemove(likerUid),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
   }
 }
 
@@ -503,6 +542,100 @@ export async function createFirestoreComment(postId: string, comment: CommentIte
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, path);
   }
+}
+
+export async function deleteFirestoreComment(postId: string, commentId: string): Promise<void> {
+  if (!auth.currentUser) return;
+  const path = `posts/${postId}/comments/${commentId}`;
+  try {
+    await deleteDoc(doc(db, 'posts', postId, 'comments', commentId));
+    const parentRef = doc(db, 'posts', postId);
+    const parentSnap = await getDoc(parentRef);
+    if (parentSnap.exists()) {
+      const current = Number(parentSnap.data().commentsCount || 0);
+      if (current > 0) {
+        await updateDoc(parentRef, {
+          commentsCount: current - 1,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+// --- Real-Time Activity Notifications ---
+
+export function subscribeToNotifications(
+  uid: string,
+  onUpdate: (notifications: NotificationItem[]) => void,
+): Unsubscribe {
+  const path = 'notifications';
+  const q = query(collection(db, 'notifications'), where('recipientId', '==', uid));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: NotificationItem[] = snap.docs
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            recipientId: String(data.recipientId || ''),
+            senderId: String(data.senderId || ''),
+            senderName: String(data.senderName || 'Creator'),
+            senderHandle: String(data.senderHandle || 'member'),
+            senderAvatar: String(data.senderAvatar || ''),
+            type: (data.type as NotificationType) || 'like',
+            postId: String(data.postId || '') || undefined,
+            read: Boolean(data.read),
+            createdAt: toMillis(data.createdAt),
+          };
+        })
+        .sort((a, b) => b.createdAt - a.createdAt);
+      onUpdate(list);
+    },
+    () => {
+      // Gracefully ignore until notifications rules are deployed on external Firebase project
+      onUpdate([]);
+    },
+  );
+}
+
+export async function createFirestoreNotification(params: {
+  recipientId: string;
+  sender: CreatorProfile;
+  type: NotificationType;
+  postId?: string;
+}): Promise<void> {
+  if (!auth.currentUser) return;
+  if (!params.recipientId || params.recipientId === params.sender.uid) return;
+  const id = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  try {
+    await setDoc(doc(db, 'notifications', id), {
+      id,
+      recipientId: params.recipientId,
+      senderId: params.sender.uid,
+      senderName: clampString(params.sender.displayName || 'Creator', 60) || 'Creator',
+      senderHandle: clampString(params.sender.handle || 'member', 32),
+      senderAvatar: (params.sender.avatarUrl || '').slice(0, 350000),
+      type: params.type,
+      postId: clampString(params.postId, 128),
+      read: false,
+      createdAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking notification write
+  }
+}
+
+export async function markNotificationsRead(notificationIds: string[]): Promise<void> {
+  if (!auth.currentUser || notificationIds.length === 0) return;
+  await Promise.all(
+    notificationIds.map((id) =>
+      updateDoc(doc(db, 'notifications', id), { read: true }).catch(() => {}),
+    ),
+  );
 }
 
 // --- Real-Time Direct Messages ---

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Eye, Heart, MessageSquare, Play, Search, UserCheck, UserPlus, X } from 'lucide-react';
 import { formatCount, getAuraBorderStyle } from '../lib/utils';
 import { SafeImage } from './SafeImage';
+import { UserAvatar } from './UserAvatar';
 import type { CreatorProfile, MoodFilter, PostItem } from '../types';
 
 interface ExploreViewProps {
@@ -53,6 +54,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
         !trimmed ||
         p.caption.toLowerCase().includes(trimmed) ||
         p.authorHandle.toLowerCase().includes(trimmed) ||
+        p.authorName.toLowerCase().includes(trimmed) ||
         p.mood.toLowerCase().includes(trimmed) ||
         (p.location || '').toLowerCase().includes(trimmed);
       return moodOk && queryOk;
@@ -142,10 +144,10 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                       className="flex items-center gap-3 min-w-0 text-left flex-1 cursor-pointer group"
                     >
                       <div className={`p-[1.5px] rounded-2xl shrink-0 ${aura.ring}`}>
-                        <SafeImage
+                        <UserAvatar
                           src={creator.avatarUrl}
                           alt={creator.displayName}
-                          className="w-11 h-11 rounded-[14.5px] object-cover bg-[#0A0A0D]"
+                          className="w-11 h-11 rounded-[14.5px]"
                         />
                       </div>
                       <div className="min-w-0">

@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
+  AtSign,
   Bookmark,
   Camera,
   Check,
@@ -9,23 +11,30 @@ import {
   Grid,
   Lock,
   LogOut,
+  Mail,
+  MapPin,
   MessageSquare,
   Mic,
+  Pencil,
   Play,
-  SlidersHorizontal,
+  Settings,
   Square,
+  User as UserIcon,
   UserCheck,
   UserPlus,
+  X,
 } from 'lucide-react';
 import { generateWaveform } from '../lib/audio';
 import { uploadAudioBlob, uploadMedia } from '../lib/cloudinary';
 import { formatAudioClock, formatCount, getAuraBorderStyle, sanitizeHandle } from '../lib/utils';
 import { SafeImage } from './SafeImage';
+import { UserAvatar } from './UserAvatar';
 import { VoiceWavePlayer } from './VoiceWavePlayer';
 import type { AuraBorder, CreatorProfile, PostItem } from '../types';
 
 interface ProfileViewProps {
   profile: CreatorProfile;
+  userEmail?: string;
   isOwnProfile: boolean;
   posts: PostItem[];
   bookmarkedPosts: PostItem[];
@@ -48,6 +57,7 @@ const AURA_BORDERS: { id: AuraBorder; label: string }[] = [
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
   profile,
+  userEmail,
   isOwnProfile,
   posts,
   bookmarkedPosts,
@@ -61,12 +71,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onSignOut,
 }) => {
   const [activeTab, setActiveTab] = useState<'drops' | 'sparks' | 'saved' | 'circle'>('drops');
-  const [isEditing, setIsEditing] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+
   const [editName, setEditName] = useState(profile.displayName);
   const [editHandle, setEditHandle] = useState(profile.handle);
   const [editBio, setEditBio] = useState(profile.bio);
   const [editLocation, setEditLocation] = useState(profile.location);
+  const [editAvatarUrl, setEditAvatarUrl] = useState(profile.avatarUrl);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const [isRecordingBio, setIsRecordingBio] = useState(false);
   const [bioSeconds, setBioSeconds] = useState(0);
@@ -74,7 +89,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const elapsedRef = useRef<number>(0);
-  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const modalAvatarInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     return () => {
@@ -90,15 +105,55 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     };
   }, []);
 
-  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const openEditProfileModal = () => {
+    setEditName(profile.displayName);
+    setEditHandle(profile.handle);
+    setEditBio(profile.bio);
+    setEditLocation(profile.location);
+    setEditAvatarUrl(profile.avatarUrl);
+    setEditError(null);
+    setShowSettingsModal(false);
+    setShowEditModal(true);
+  };
+
+  const handleModalAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !file.type.startsWith('image/')) return;
+    setEditError(null);
     setIsUploadingAvatar(true);
     try {
       const uploaded = await uploadMedia(file);
-      await onUpdateProfile({ avatarUrl: uploaded.url });
+      setEditAvatarUrl(uploaded.url);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Could not upload profile picture.');
     } finally {
       setIsUploadingAvatar(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = sanitizeHandle(editHandle);
+    if (cleaned.length < 2) {
+      setEditError('Username must be at least 2 characters (letters, numbers, dots, underscores).');
+      return;
+    }
+    setEditError(null);
+    setIsSavingEdit(true);
+    try {
+      await onUpdateProfile({
+        displayName: editName.trim() || profile.displayName,
+        handle: cleaned,
+        bio: editBio.trim(),
+        location: editLocation.trim(),
+        avatarUrl: editAvatarUrl,
+      });
+      setShowEditModal(false);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Could not save profile changes.');
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -164,18 +219,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }, 250);
   };
 
-  const handleSaveEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleaned = sanitizeHandle(editHandle);
-    await onUpdateProfile({
-      displayName: editName.trim() || profile.displayName,
-      handle: cleaned.length >= 2 ? cleaned : profile.handle,
-      bio: editBio.trim(),
-      location: editLocation.trim(),
-    });
-    setIsEditing(false);
-  };
-
   const auraStyle = getAuraBorderStyle(profile.auraBorder);
   const userPosts = posts.filter((p) => p.authorId === profile.uid);
   const userSparks = userPosts.filter((p) => p.mediaType === 'video');
@@ -186,9 +229,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         ? userSparks
         : userPosts;
   const otherCreators = creators.filter((c) => c.uid !== profile.uid);
+  const displayEmail = profile.email || userEmail || '';
 
   return (
-    <div className="h-full overflow-y-auto no-scrollbar pb-28">
+    <div className="relative h-full overflow-y-auto no-scrollbar pb-28">
       {/* Top Bar */}
       <div className="sticky top-0 z-20 bg-[#050505]/88 backdrop-blur-xl px-4 h-14 flex items-center justify-between border-b border-white/[0.06]">
         <div className="flex items-center gap-2 min-w-0">
@@ -211,17 +255,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => {
-                setEditName(profile.displayName);
-                setEditHandle(profile.handle);
-                setEditBio(profile.bio);
-                setEditLocation(profile.location);
-                setIsEditing((prev) => !prev);
-              }}
-              aria-label="Edit profile"
+              onClick={() => setShowSettingsModal(true)}
+              aria-label="Profile settings and your information"
+              title="Profile Settings"
               className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-300 hover:text-white hover:bg-white/[0.06] cursor-pointer"
             >
-              <SlidersHorizontal className="w-4 h-4" />
+              <Settings className="w-4 h-4" />
             </button>
             <button
               type="button"
@@ -241,31 +280,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         <div className="flex items-center gap-4">
           <div className="relative shrink-0">
             <div className={`p-[3px] rounded-[30px] ${auraStyle.ring} ${auraStyle.glow}`}>
-              <SafeImage
+              <UserAvatar
                 src={profile.avatarUrl}
                 alt={profile.displayName}
-                className="w-20 h-20 rounded-[27px] object-cover bg-[#0A0A0D]"
+                className="w-20 h-20 rounded-[27px]"
               />
             </div>
             {isOwnProfile && (
-              <>
-                <button
-                  type="button"
-                  disabled={isUploadingAvatar}
-                  onClick={() => avatarInputRef.current?.click()}
-                  aria-label="Upload profile photo"
-                  className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full vibe-gradient-bg text-white flex items-center justify-center shadow-lg cursor-pointer"
-                >
-                  <Camera className="w-4 h-4" />
-                </button>
-                <input
-                  ref={avatarInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleAvatarUpload}
-                  className="hidden"
-                />
-              </>
+              <button
+                type="button"
+                onClick={openEditProfileModal}
+                aria-label="Edit profile photo"
+                title="Edit Profile & Photo"
+                className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full vibe-gradient-bg text-white flex items-center justify-center shadow-lg hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+              >
+                <Camera className="w-4 h-4" />
+              </button>
             )}
           </div>
 
@@ -306,6 +336,28 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           )}
           {profile.location && <p className="text-[11px] text-zinc-500">{profile.location}</p>}
         </div>
+
+        {/* Own Profile Actions: Edit Profile + Settings */}
+        {isOwnProfile && (
+          <div className="grid grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={openEditProfileModal}
+              className="h-10 rounded-2xl vibe-gradient-bg text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-[0_8px_20px_-6px_rgba(255,46,147,0.5)] hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Edit Profile
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSettingsModal(true)}
+              className="h-10 rounded-2xl glass-surface text-zinc-100 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-white/10 active:scale-[0.98] transition-all cursor-pointer"
+            >
+              <Settings className="w-3.5 h-3.5 text-[#FF6B35]" />
+              Settings
+            </button>
+          </div>
+        )}
 
         {/* 10-Second Playable Voice Bio */}
         <div className="space-y-2">
@@ -408,60 +460,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </button>
           </div>
         )}
-
-        {/* Inline Edit Profile Form */}
-        {isOwnProfile && isEditing && (
-          <form onSubmit={handleSaveEdit} className="rounded-2xl glass-surface p-4 space-y-3">
-            <h3 className="font-display text-sm font-semibold text-white">Edit Profile</h3>
-            <input
-              type="text"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              placeholder="Display Name"
-              maxLength={50}
-              className="w-full h-10 rounded-xl bg-black/50 border border-white/10 px-3 text-xs text-white focus:outline-none focus:border-[#FF2E93]"
-            />
-            <input
-              type="text"
-              value={editHandle}
-              onChange={(e) => setEditHandle(sanitizeHandle(e.target.value))}
-              placeholder="handle"
-              maxLength={24}
-              className="w-full h-10 rounded-xl bg-black/50 border border-white/10 px-3 text-xs font-mono text-white focus:outline-none focus:border-[#FF2E93]"
-            />
-            <input
-              type="text"
-              value={editLocation}
-              onChange={(e) => setEditLocation(e.target.value)}
-              placeholder="City"
-              maxLength={60}
-              className="w-full h-10 rounded-xl bg-black/50 border border-white/10 px-3 text-xs text-white focus:outline-none focus:border-[#FF2E93]"
-            />
-            <textarea
-              rows={2}
-              value={editBio}
-              onChange={(e) => setEditBio(e.target.value)}
-              placeholder="Bio"
-              maxLength={200}
-              className="w-full rounded-xl bg-black/50 border border-white/10 p-3 text-xs text-white focus:outline-none focus:border-[#FF2E93] resize-none"
-            />
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsEditing(false)}
-                className="flex-1 h-10 rounded-xl bg-white/[0.06] text-xs font-medium text-zinc-300 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="flex-1 h-10 rounded-xl vibe-gradient-bg text-white text-xs font-semibold shadow-[0_6px_16px_-4px_rgba(255,46,147,0.5)] cursor-pointer"
-              >
-                Save Changes
-              </button>
-            </div>
-          </form>
-        )}
       </div>
 
       {/* Content Tabs: Drops, Sparks, Saved, Circle */}
@@ -541,10 +539,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   className="rounded-2xl glass-surface p-3 flex items-center justify-between gap-3"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <SafeImage
+                    <UserAvatar
                       src={c.avatarUrl}
                       alt={c.handle}
-                      className="w-10 h-10 rounded-xl object-cover shrink-0"
+                      className="w-10 h-10 rounded-xl shrink-0"
                     />
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-white truncate">@{c.handle}</p>
@@ -655,6 +653,302 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Edit Profile Modal */}
+      <AnimatePresence>
+        {isOwnProfile && showEditModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed md:absolute inset-0 z-50 bg-black/75 backdrop-blur-md flex flex-col justify-end"
+          >
+            <button
+              type="button"
+              aria-label="Close edit profile"
+              onClick={() => !isSavingEdit && setShowEditModal(false)}
+              className="flex-1 w-full cursor-default"
+            />
+            <motion.form
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+              onSubmit={handleSaveEdit}
+              className="max-h-[90%] rounded-t-[34px] bg-[#0A0A10] border-t border-white/14 flex flex-col overflow-hidden"
+            >
+              <div className="px-5 pt-4 pb-3 border-b border-white/10 flex items-center justify-between">
+                <h2 className="font-display text-base font-bold text-white">Edit Profile</h2>
+                <button
+                  type="button"
+                  disabled={isSavingEdit}
+                  onClick={() => setShowEditModal(false)}
+                  aria-label="Close edit profile modal"
+                  className="w-9 h-9 rounded-full bg-white/[0.06] flex items-center justify-center text-zinc-300 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto no-scrollbar p-5 space-y-4">
+                {/* Profile Picture Upload */}
+                <div className="flex flex-col items-center gap-2.5">
+                  <div className="relative">
+                    <div className={`p-[3px] rounded-[30px] ${auraStyle.ring}`}>
+                      <UserAvatar
+                        src={editAvatarUrl}
+                        alt={editName || profile.displayName}
+                        className="w-22 h-22 rounded-[27px]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isUploadingAvatar}
+                      onClick={() => modalAvatarInputRef.current?.click()}
+                      aria-label="Upload new profile picture"
+                      className="absolute -bottom-1 -right-1 w-9 h-9 rounded-full vibe-gradient-bg text-white flex items-center justify-center shadow-lg cursor-pointer disabled:opacity-50"
+                    >
+                      <Camera className="w-4 h-4" />
+                    </button>
+                    <input
+                      ref={modalAvatarInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleModalAvatarUpload}
+                      className="hidden"
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      disabled={isUploadingAvatar}
+                      onClick={() => modalAvatarInputRef.current?.click()}
+                      className="text-xs font-semibold vibe-gradient-text cursor-pointer"
+                    >
+                      {isUploadingAvatar ? 'Uploading photo…' : 'Change Profile Photo'}
+                    </button>
+                    {editAvatarUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setEditAvatarUrl('')}
+                        className="text-xs text-zinc-500 hover:text-rose-400 cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-zinc-300">Display Name</span>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="Your name"
+                    maxLength={50}
+                    className="w-full h-11 rounded-2xl bg-white/[0.06] border border-white/10 px-4 text-sm text-white focus:outline-none focus:border-[#FF2E93]"
+                  />
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-zinc-300">Username</span>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-mono text-[#FF6B35]">
+                      @
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={editHandle}
+                      onChange={(e) => setEditHandle(sanitizeHandle(e.target.value))}
+                      placeholder="username"
+                      maxLength={24}
+                      className="w-full h-11 rounded-2xl bg-white/[0.06] border border-white/10 pl-9 pr-4 text-sm font-mono text-white focus:outline-none focus:border-[#FF2E93]"
+                    />
+                  </div>
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-zinc-300">City</span>
+                  <input
+                    type="text"
+                    value={editLocation}
+                    onChange={(e) => setEditLocation(e.target.value)}
+                    placeholder="e.g. Bengaluru, IN"
+                    maxLength={60}
+                    className="w-full h-11 rounded-2xl bg-white/[0.06] border border-white/10 px-4 text-sm text-white focus:outline-none focus:border-[#FF2E93]"
+                  />
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-zinc-300">Bio</span>
+                  <textarea
+                    rows={3}
+                    value={editBio}
+                    onChange={(e) => setEditBio(e.target.value)}
+                    placeholder="Tell people about your vibe…"
+                    maxLength={200}
+                    className="w-full rounded-2xl bg-white/[0.06] border border-white/10 p-3.5 text-sm text-white focus:outline-none focus:border-[#FF2E93] resize-none"
+                  />
+                </label>
+
+                {editError && (
+                  <p className="text-xs text-rose-400 text-center">{editError}</p>
+                )}
+
+                <div className="grid grid-cols-2 gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    disabled={isSavingEdit}
+                    onClick={() => setShowEditModal(false)}
+                    className="h-12 rounded-2xl bg-white/[0.06] text-xs font-semibold text-zinc-300 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingEdit || isUploadingAvatar}
+                    className="h-12 rounded-2xl vibe-gradient-bg text-white text-xs font-semibold shadow-[0_8px_22px_-6px_rgba(255,46,147,0.55)] cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingEdit ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Profile Settings -> "Your Information" Modal */}
+      <AnimatePresence>
+        {isOwnProfile && showSettingsModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed md:absolute inset-0 z-50 bg-black/75 backdrop-blur-md flex flex-col justify-end"
+          >
+            <button
+              type="button"
+              aria-label="Close settings"
+              onClick={() => setShowSettingsModal(false)}
+              className="flex-1 w-full cursor-default"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+              className="max-h-[85%] rounded-t-[34px] bg-[#0A0A10] border-t border-white/14 flex flex-col overflow-hidden"
+            >
+              <div className="px-5 pt-4 pb-3 border-b border-white/10 flex items-center justify-between">
+                <div>
+                  <h2 className="font-display text-base font-bold text-white">Profile Settings</h2>
+                  <p className="text-[11px] text-zinc-400">Account details &amp; preferences</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  aria-label="Close profile settings"
+                  className="w-9 h-9 rounded-full bg-white/[0.06] flex items-center justify-center text-zinc-300 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto no-scrollbar p-5 space-y-5">
+                {/* Your Information Section */}
+                <div className="space-y-2.5">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 px-1">
+                    Your Information
+                  </h3>
+                  <div className="rounded-[24px] glass-surface divide-y divide-white/[0.07] overflow-hidden">
+                    <div className="p-3.5 flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-white/[0.06] flex items-center justify-center text-[#FF6B35] shrink-0">
+                        <Mail className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-[11px] text-zinc-400">Email Address</span>
+                        <span className="block text-sm font-medium text-white truncate">
+                          {displayEmail || 'Not linked'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-white/[0.06] flex items-center justify-center text-[#FF2E93] shrink-0">
+                        <AtSign className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-[11px] text-zinc-400">Username</span>
+                        <span className="block text-sm font-mono font-medium text-white truncate">
+                          @{profile.handle}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-white/[0.06] flex items-center justify-center text-[#C77DFF] shrink-0">
+                        <UserIcon className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-[11px] text-zinc-400">Display Name</span>
+                        <span className="block text-sm font-medium text-white truncate">
+                          {profile.displayName}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-white/[0.06] flex items-center justify-center text-[#FF6B35] shrink-0">
+                        <MapPin className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-[11px] text-zinc-400">City</span>
+                        <span className="block text-sm font-medium text-white truncate">
+                          {profile.location || 'Not set'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Actions */}
+                <div className="space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={openEditProfileModal}
+                    className="w-full h-12 rounded-2xl vibe-gradient-bg text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-[0_8px_22px_-6px_rgba(255,46,147,0.5)] cursor-pointer"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    Edit Profile &amp; Photo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSettingsModal(false);
+                      onSignOut();
+                    }}
+                    className="w-full h-12 rounded-2xl bg-rose-500/12 border border-rose-500/30 text-rose-300 text-xs font-semibold flex items-center justify-center gap-2 hover:bg-rose-500/20 cursor-pointer"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Sign Out
+                  </button>
+                </div>
+
+                <div className="text-center pt-1 pb-2 space-y-0.5">
+                  <p className="text-[11px] font-semibold vibe-gradient-text">
+                    VibeGram · Catch the Desi Vibe
+                  </p>
+                  <p className="text-[11px] text-zinc-500">🇮🇳 India&apos;s Own Social Platform</p>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

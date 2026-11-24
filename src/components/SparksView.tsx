@@ -10,14 +10,16 @@ import {
   Play,
   Plus,
   Send,
+  Trash2,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import { formatCount } from '../lib/utils';
-import { SafeImage } from './SafeImage';
+import { UserAvatar } from './UserAvatar';
 import type { PostItem } from '../types';
 
 interface SparksViewProps {
+  currentUserId: string;
   videoPosts: PostItem[];
   initialVideoId?: string | null;
   isMuted: boolean;
@@ -28,6 +30,7 @@ interface SparksViewProps {
   onToggleBookmark: (postId: string) => void;
   onOpenComments: (post: PostItem) => void;
   onShare: (post: PostItem) => void;
+  onDeletePost?: (postId: string) => void;
   onInspectCreator: (authorId: string) => void;
   onOpenCreate: () => void;
   onClose?: () => void;
@@ -35,6 +38,7 @@ interface SparksViewProps {
 
 interface SparkSlideProps {
   spark: PostItem;
+  isOwnSpark: boolean;
   isActive: boolean;
   isMuted: boolean;
   isOverlay: boolean;
@@ -44,12 +48,14 @@ interface SparkSlideProps {
   onToggleBookmark: (postId: string) => void;
   onOpenComments: (post: PostItem) => void;
   onShare: (post: PostItem) => void;
+  onDeletePost?: (postId: string) => void;
   onInspectCreator: (authorId: string) => void;
   onClose?: () => void;
 }
 
 const SparkSlide: React.FC<SparkSlideProps> = ({
   spark,
+  isOwnSpark,
   isActive,
   isMuted,
   isOverlay,
@@ -59,6 +65,7 @@ const SparkSlide: React.FC<SparkSlideProps> = ({
   onToggleBookmark,
   onOpenComments,
   onShare,
+  onDeletePost,
   onInspectCreator,
   onClose,
 }) => {
@@ -240,21 +247,37 @@ const SparkSlide: React.FC<SparkSlideProps> = ({
           </h2>
         </div>
 
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleMute();
-          }}
-          aria-label={isMuted ? 'Unmute spark video' : 'Mute spark video'}
-          className="w-11 h-11 rounded-full bg-black/50 backdrop-blur-md border border-white/15 flex items-center justify-center text-white active:scale-95 transition-transform cursor-pointer"
-        >
-          {isMuted ? (
-            <VolumeX className="w-5 h-5" />
-          ) : (
-            <Volume2 className="w-5 h-5 text-[#FF6B35]" />
+        <div className="flex items-center gap-2">
+          {isOwnSpark && onDeletePost && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeletePost(spark.id);
+              }}
+              aria-label="Delete Spark"
+              title="Delete Spark"
+              className="w-11 h-11 rounded-full bg-black/50 backdrop-blur-md border border-white/15 flex items-center justify-center text-zinc-200 hover:text-rose-400 hover:bg-rose-500/20 active:scale-95 transition-all cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           )}
-        </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleMute();
+            }}
+            aria-label={isMuted ? 'Unmute spark video' : 'Mute spark video'}
+            className="w-11 h-11 rounded-full bg-black/50 backdrop-blur-md border border-white/15 flex items-center justify-center text-white active:scale-95 transition-transform cursor-pointer"
+          >
+            {isMuted ? (
+              <VolumeX className="w-5 h-5" />
+            ) : (
+              <Volume2 className="w-5 h-5 text-[#FF6B35]" />
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Paused Center Indicator */}
@@ -382,10 +405,10 @@ const SparkSlide: React.FC<SparkSlideProps> = ({
           className="flex items-center gap-2.5 text-left cursor-pointer group"
         >
           <div className="p-[1.5px] rounded-2xl vibe-capsule-ring">
-            <SafeImage
+            <UserAvatar
               src={spark.authorAvatar}
               alt={spark.authorHandle}
-              className="w-10 h-10 rounded-[14.5px] object-cover"
+              className="w-10 h-10 rounded-[14.5px]"
             />
           </div>
           <div>
@@ -416,6 +439,7 @@ const SparkSlide: React.FC<SparkSlideProps> = ({
 };
 
 export const SparksView: React.FC<SparksViewProps> = ({
+  currentUserId,
   videoPosts,
   initialVideoId = null,
   isMuted,
@@ -426,6 +450,7 @@ export const SparksView: React.FC<SparksViewProps> = ({
   onToggleBookmark,
   onOpenComments,
   onShare,
+  onDeletePost,
   onInspectCreator,
   onOpenCreate,
   onClose,
@@ -521,6 +546,7 @@ export const SparksView: React.FC<SparksViewProps> = ({
         <SparkSlide
           key={spark.id}
           spark={spark}
+          isOwnSpark={spark.authorId === currentUserId}
           isActive={!isSuspended && activeSparkId === spark.id}
           isMuted={isMuted}
           isOverlay={Boolean(onClose)}
@@ -530,6 +556,7 @@ export const SparksView: React.FC<SparksViewProps> = ({
           onToggleBookmark={onToggleBookmark}
           onOpenComments={onOpenComments}
           onShare={onShare}
+          onDeletePost={onDeletePost}
           onInspectCreator={onInspectCreator}
           onClose={onClose}
         />

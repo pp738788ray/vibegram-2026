@@ -87,6 +87,8 @@ export const CreateModal: React.FC<CreateModalProps> = ({
           caption: caption.trim(),
           mood,
           visibility,
+          viewedBy: [],
+          likedBy: [],
           isSeen: false,
           createdAt: timestamp,
         });

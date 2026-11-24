@@ -13,7 +13,7 @@ service cloud.firestore {
     }
 
     function isVerified() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn();
     }
 
     function isOwner(userId) {
@@ -48,11 +48,12 @@ service cloud.firestore {
         'followersCount', 'followingCount', 'sparksCount', 'isDiscoverable', 'createdAt', 'updatedAt'
       ])
       && data.keys().hasOnly([
-        'uid', 'handle', 'displayName', 'bio', 'location', 'avatarUrl', 'auraBadge',
+        'uid', 'email', 'handle', 'displayName', 'bio', 'location', 'avatarUrl', 'auraBadge',
         'auraBorder', 'voiceBioUrl', 'voiceBioTranscript', 'voiceBioDuration', 'voiceBioWaveform',
         'followersCount', 'followingCount', 'sparksCount', 'isDiscoverable', 'createdAt', 'updatedAt'
       ])
       && isValidId(data.uid)
+      && (!('email' in data) || (data.email is string && data.email.size() <= 200))
       && data.handle is string && data.handle.size() >= 2 && data.handle.size() <= 32 && data.handle.matches('^[a-z0-9._]+$')
       && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60
       && data.bio is string && data.bio.size() <= 240
@@ -145,11 +146,10 @@ service cloud.firestore {
       ])
       && data.keys().hasOnly([
         'id', 'authorId', 'authorHandle', 'authorName', 'authorAvatar', 'authorAura',
-        'mediaUrl', 'mediaType', 'caption', 'mood', 'visibility', 'createdAt'
+        'mediaUrl', 'mediaType', 'caption', 'mood', 'visibility', 'viewedBy', 'likedBy', 'createdAt'
       ])
       && isValidId(data.id)
       && isValidId(data.authorId)
-      && data.authorId == request.auth.uid
       && data.authorHandle is string && data.authorHandle.size() >= 2 && data.authorHandle.size() <= 32
       && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
       && data.authorAvatar is string && data.authorAvatar.size() <= 350000
@@ -159,6 +159,29 @@ service cloud.firestore {
       && data.caption is string && data.caption.size() <= 200
       && data.mood in ['Desi', 'Music', 'Chill', 'Gaming', 'Tech', 'Aesthetic']
       && data.visibility in ['public', 'inner_circle']
+      && (!('viewedBy' in data) || isValidStringList(data.viewedBy, 500))
+      && (!('likedBy' in data) || isValidStringList(data.likedBy, 500))
+      && data.createdAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll([
+        'id', 'recipientId', 'senderId', 'senderName', 'senderHandle', 'senderAvatar',
+        'type', 'postId', 'read', 'createdAt'
+      ])
+      && data.keys().hasOnly([
+        'id', 'recipientId', 'senderId', 'senderName', 'senderHandle', 'senderAvatar',
+        'type', 'postId', 'read', 'createdAt'
+      ])
+      && isValidId(data.id)
+      && isValidId(data.recipientId)
+      && isValidId(data.senderId)
+      && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 60
+      && data.senderHandle is string && data.senderHandle.size() >= 2 && data.senderHandle.size() <= 32
+      && data.senderAvatar is string && data.senderAvatar.size() <= 350000
+      && data.type in ['like', 'comment', 'follow']
+      && data.postId is string && data.postId.size() <= 128
+      && data.read is bool
       && data.createdAt is timestamp;
     }
 
@@ -188,7 +211,7 @@ service cloud.firestore {
       && data.updatedAt is timestamp;
     }
 
-    // --- Collection: Users (Public Profile, Zero PII) ---
+    // --- Collection: Users ---
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && (existing().isDiscoverable == true || isOwner(userId));
       allow list: if isSignedIn() && existing().isDiscoverable == true;
@@ -209,7 +232,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly([
-            'handle', 'displayName', 'bio', 'location', 'avatarUrl', 'auraBadge',
+            'email', 'handle', 'displayName', 'bio', 'location', 'avatarUrl', 'auraBadge',
             'auraBorder', 'voiceBioUrl', 'voiceBioTranscript', 'voiceBioDuration', 'voiceBioWaveform',
             'followingCount', 'sparksCount', 'isDiscoverable', 'updatedAt'
           ])) ||
@@ -278,7 +301,8 @@ service cloud.firestore {
             && (incoming().likesCount == existing().likesCount + 1
               || incoming().likesCount == existing().likesCount - 1)) ||
           (incoming().diff(existing()).affectedKeys().hasOnly(['commentsCount', 'updatedAt'])
-            && incoming().commentsCount == existing().commentsCount + 1) ||
+            && (incoming().commentsCount == existing().commentsCount + 1
+              || incoming().commentsCount == existing().commentsCount - 1)) ||
           (incoming().diff(existing()).affectedKeys().hasOnly(['views', 'updatedAt'])
             && incoming().views == (('views' in existing() ? existing().views : 0) + 1))
         );
@@ -299,7 +323,13 @@ service cloud.firestore {
           && exists(/databases/$(database)/documents/posts/$(postId));
 
         allow update: if false;
-        allow delete: if isVerified() && isValidId(postId) && isValidId(commentId) && existing().authorId == request.auth.uid;
+        allow delete: if isVerified()
+          && isValidId(postId)
+          && isValidId(commentId)
+          && (
+            existing().authorId == request.auth.uid
+            || get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid
+          );
       }
     }
 
@@ -312,10 +342,45 @@ service cloud.firestore {
         && isValidId(storyId)
         && isValidStory(incoming())
         && incoming().id == storyId
+        && incoming().authorId == request.auth.uid
         && incoming().createdAt == request.time;
 
-      allow update: if false;
+      allow update: if isVerified()
+        && isValidId(storyId)
+        && isValidStory(incoming())
+        && incoming().id == existing().id
+        && incoming().authorId == existing().authorId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['viewedBy', 'likedBy']);
+
       allow delete: if isVerified() && isValidId(storyId) && existing().authorId == request.auth.uid;
+    }
+
+    // --- Collection: Activity Notifications ---
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() && isValidId(notificationId) && existing().recipientId == request.auth.uid;
+      allow list: if isSignedIn() && existing().recipientId == request.auth.uid;
+
+      allow create: if isVerified()
+        && isValidId(notificationId)
+        && isValidNotification(incoming())
+        && incoming().id == notificationId
+        && incoming().senderId == request.auth.uid
+        && incoming().recipientId != request.auth.uid
+        && incoming().read == false
+        && incoming().createdAt == request.time;
+
+      allow update: if isVerified()
+        && isValidId(notificationId)
+        && existing().recipientId == request.auth.uid
+        && isValidNotification(incoming())
+        && incoming().id == existing().id
+        && incoming().recipientId == existing().recipientId
+        && incoming().senderId == existing().senderId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+
+      allow delete: if isVerified() && isValidId(notificationId) && existing().recipientId == request.auth.uid;
     }
 
     // --- Collection: Direct Message Chats ---

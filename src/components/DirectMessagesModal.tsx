@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { ArrowLeft, MessageSquare, Send, X } from 'lucide-react';
 import { subscribeToMessages } from '../lib/firestoreSync';
 import { formatRelativeTime } from '../lib/utils';
-import { SafeImage } from './SafeImage';
+import { UserAvatar } from './UserAvatar';
 import type { ChatMessage, ChatThread, CreatorProfile } from '../types';
 
 interface DirectMessagesModalProps {
@@ -83,10 +83,10 @@ export const DirectMessagesModal: React.FC<DirectMessagesModalProps> = ({
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <div className="relative shrink-0">
-                <SafeImage
+                <UserAvatar
                   src={activeThread.participant.avatarUrl}
                   alt={activeThread.participant.displayName}
-                  className="w-10 h-10 rounded-2xl object-cover"
+                  className="w-10 h-10 rounded-2xl"
                 />
                 <span
                   className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full vibe-gradient-bg ring-2 ring-[#08080C]"
@@ -152,10 +152,10 @@ export const DirectMessagesModal: React.FC<DirectMessagesModalProps> = ({
                 onClick={() => setActiveThreadId(thread.id)}
                 className="w-full rounded-2xl glass-surface p-3.5 flex items-center gap-3.5 text-left hover:bg-white/[0.09] active:scale-[0.99] transition-all cursor-pointer"
               >
-                <SafeImage
+                <UserAvatar
                   src={thread.participant.avatarUrl}
                   alt={thread.participant.displayName}
-                  className="w-12 h-12 rounded-2xl object-cover shrink-0"
+                  className="w-12 h-12 rounded-2xl shrink-0"
                 />
 
                 <div className="flex-1 min-w-0">

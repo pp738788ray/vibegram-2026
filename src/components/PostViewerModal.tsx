@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { formatCount, formatRelativeTime } from '../lib/utils';
 import { SafeImage } from './SafeImage';
+import { UserAvatar } from './UserAvatar';
 import type { PostItem } from '../types';
 
 interface PostViewerModalProps {
@@ -86,10 +87,10 @@ export const PostViewerModal: React.FC<PostViewerModalProps> = ({
             className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer group"
           >
             <div className="p-[1.5px] rounded-xl vibe-capsule-ring shrink-0">
-              <SafeImage
+              <UserAvatar
                 src={post.authorAvatar}
                 alt={post.authorName}
-                className="w-9 h-9 rounded-[10.5px] object-cover bg-[#0A0A0D]"
+                className="w-9 h-9 rounded-[10.5px]"
               />
             </div>
             <div className="min-w-0">
@@ -126,10 +127,7 @@ export const PostViewerModal: React.FC<PostViewerModalProps> = ({
           {isOwnPost && onDeletePost && (
             <button
               type="button"
-              onClick={() => {
-                onDeletePost(post.id);
-                onClose();
-              }}
+              onClick={() => onDeletePost(post.id)}
               aria-label="Delete post"
               className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-400 hover:text-rose-400 hover:bg-white/[0.08] cursor-pointer"
             >

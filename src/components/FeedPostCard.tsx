@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { formatCount, formatRelativeTime } from '../lib/utils';
 import { SafeImage } from './SafeImage';
+import { UserAvatar } from './UserAvatar';
 import type { PostItem } from '../types';
 
 interface FeedPostCardProps {
@@ -163,10 +164,10 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
           className="flex items-center gap-3 min-w-0 text-left cursor-pointer group"
         >
           <div className="p-[1.5px] rounded-2xl vibe-capsule-ring shrink-0">
-            <SafeImage
+            <UserAvatar
               src={post.authorAvatar}
               alt={post.authorName}
-              className="w-10 h-10 rounded-[14.5px] object-cover bg-[#0A0A0D]"
+              className="w-10 h-10 rounded-[14.5px]"
             />
           </div>
           <div className="min-w-0">

@@ -2,10 +2,11 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Public VibeGram creator profile without PII.",
+      "description": "VibeGram creator profile.",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 200 },
         "handle": { "type": "string", "minLength": 2, "maxLength": 32, "pattern": "^[a-z0-9._]+$" },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 60 },
         "bio": { "type": "string", "maxLength": 240 },
@@ -138,9 +139,29 @@
         "caption": { "type": "string", "maxLength": 200 },
         "mood": { "type": "string", "enum": ["Desi", "Music", "Chill", "Gaming", "Tech", "Aesthetic"] },
         "visibility": { "type": "string", "enum": ["public", "inner_circle"] },
+        "viewedBy": { "type": "array" },
+        "likedBy": { "type": "array" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "authorId", "authorHandle", "authorName", "authorAvatar", "authorAura", "mediaUrl", "mediaType", "caption", "mood", "visibility", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Activity notification for likes, comments, and new followers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "recipientId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "senderHandle": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "senderAvatar": { "type": "string", "maxLength": 350000 },
+        "type": { "type": "string", "enum": ["like", "comment", "follow"] },
+        "postId": { "type": "string", "maxLength": 128 },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "recipientId", "senderId", "senderName", "senderHandle", "senderAvatar", "type", "postId", "read", "createdAt"]
     },
     "Chat": {
       "title": "Chat",
@@ -175,7 +196,7 @@
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Public real creator profiles without PII."
+      "description": "Real creator profiles."
     },
     "/users/{userId}/private/{docId}": {
       "schema": { "$ref": "#/entities/UserPrivate" },
@@ -192,6 +213,10 @@
     "/stories/{storyId}": {
       "schema": { "$ref": "#/entities/Story" },
       "description": "Real user vertical capsule stories."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Real-time user activity notifications."
     },
     "/chats/{chatId}": {
       "schema": { "$ref": "#/entities/Chat" },

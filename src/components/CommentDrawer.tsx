@@ -5,7 +5,7 @@ import { generateWaveform } from '../lib/audio';
 import { uploadAudioBlob } from '../lib/cloudinary';
 import { subscribeToComments } from '../lib/firestoreSync';
 import { formatAudioClock, formatRelativeTime } from '../lib/utils';
-import { SafeImage } from './SafeImage';
+import { UserAvatar } from './UserAvatar';
 import { VoiceWavePlayer } from './VoiceWavePlayer';
 import type { CommentItem, CreatorProfile, PostItem } from '../types';
 
@@ -14,6 +14,7 @@ interface CommentDrawerProps {
   currentUser: CreatorProfile;
   onClose: () => void;
   onAddComment: (postId: string, comment: CommentItem) => Promise<void>;
+  onDeleteComment: (postId: string, commentId: string) => Promise<void>;
 }
 
 const MAX_VOICE_SECONDS = 10;
@@ -23,8 +24,10 @@ export const CommentDrawer: React.FC<CommentDrawerProps> = ({
   currentUser,
   onClose,
   onAddComment,
+  onDeleteComment,
 }) => {
   const [comments, setComments] = useState<CommentItem[]>([]);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -231,40 +234,66 @@ export const CommentDrawer: React.FC<CommentDrawerProps> = ({
               </p>
             </div>
           ) : (
-            comments.map((comment, idx) => (
-              <div key={comment.id} className="flex items-start gap-3">
-                <SafeImage
-                  src={comment.authorAvatar}
-                  alt={comment.authorHandle}
-                  className="w-8 h-8 rounded-xl object-cover bg-white/10 shrink-0 mt-0.5"
-                />
-                <div className="flex-1 min-w-0 space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-semibold text-white">
-                      @{comment.authorHandle}
-                    </span>
-                    <span className="text-[11px] font-mono tabular-nums text-zinc-500">
-                      · {formatRelativeTime(comment.createdAt)}
-                    </span>
-                  </div>
+            comments.map((comment, idx) => {
+              const canDelete =
+                comment.authorId === currentUser.uid || post.authorId === currentUser.uid;
 
-                  {comment.type === 'voice' ? (
-                    <VoiceWavePlayer
-                      id={comment.id}
-                      durationSec={comment.audioDuration || 5}
-                      waveform={comment.waveform}
-                      audioUrl={comment.audioUrl}
-                      compact
-                      seed={idx + 11}
-                    />
-                  ) : (
-                    <p className="text-[13px] text-zinc-200 leading-relaxed">
-                      {comment.text}
-                    </p>
-                  )}
+              return (
+                <div key={comment.id} className="flex items-start gap-3 group">
+                  <UserAvatar
+                    src={comment.authorAvatar}
+                    alt={comment.authorHandle}
+                    className="w-8 h-8 rounded-xl shrink-0 mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-xs font-semibold text-white truncate">
+                          @{comment.authorHandle}
+                        </span>
+                        <span className="text-[11px] font-mono tabular-nums text-zinc-500 shrink-0">
+                          · {formatRelativeTime(comment.createdAt)}
+                        </span>
+                      </div>
+                      {canDelete && (
+                        <button
+                          type="button"
+                          disabled={deletingId === comment.id}
+                          onClick={async () => {
+                            setDeletingId(comment.id);
+                            try {
+                              await onDeleteComment(post.id, comment.id);
+                            } finally {
+                              setDeletingId(null);
+                            }
+                          }}
+                          aria-label="Delete comment"
+                          title="Delete comment"
+                          className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-500 hover:text-rose-400 hover:bg-white/[0.06] transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {comment.type === 'voice' ? (
+                      <VoiceWavePlayer
+                        id={comment.id}
+                        durationSec={comment.audioDuration || 5}
+                        waveform={comment.waveform}
+                        audioUrl={comment.audioUrl}
+                        compact
+                        seed={idx + 11}
+                      />
+                    ) : (
+                      <p className="text-[13px] text-zinc-200 leading-relaxed break-words">
+                        {comment.text}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 

@@ -1,26 +1,33 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
-import { Globe, Lock, MessageCircle, Plus, Sparkles } from 'lucide-react';
+import { Globe, Heart, Lock, MessageCircle, Plus, Sparkles } from 'lucide-react';
 import { auth } from './lib/firebase';
 import {
   createFirestoreComment,
+  createFirestoreNotification,
   createFirestorePost,
   createFirestoreStory,
+  deleteFirestoreComment,
   deleteFirestorePost,
+  deleteFirestoreStory,
   fetchUserPrivate,
   fetchUserProfile,
   incrementFirestorePostViews,
   makeChatId,
+  markNotificationsRead,
   reactFirestoreMessage,
+  recordFirestoreStoryView,
   saveUserPrivateOnly,
   saveUserProfile,
   sendFirestoreMessage,
   subscribeToChats,
   subscribeToDiscoverableUsers,
+  subscribeToNotifications,
   subscribeToPosts,
   subscribeToStories,
   toggleFirestorePostLike,
+  toggleFirestoreStoryLike,
   updateTargetFollowersCount,
   type RawChatDoc,
 } from './lib/firestoreSync';
@@ -33,6 +40,8 @@ import { CreateModal } from './components/CreateModal';
 import { SparksView } from './components/SparksView';
 import { ExploreView } from './components/ExploreView';
 import { DirectMessagesModal } from './components/DirectMessagesModal';
+import { ActivityModal } from './components/ActivityModal';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { ProfileView } from './components/ProfileView';
 import { FloatingBottomDock } from './components/FloatingBottomDock';
 import { SplashScreen } from './components/SplashScreen';
@@ -44,6 +53,7 @@ import type {
   CreatorProfile,
   FeedScope,
   MoodFilter,
+  NotificationItem,
   PostItem,
   StoryItem,
   UserPrivateState,
@@ -73,6 +83,7 @@ export default function App() {
   const [rawStories, setRawStories] = useState<StoryItem[]>([]);
   const [rawPosts, setRawPosts] = useState<PostItem[]>([]);
   const [rawChats, setRawChats] = useState<RawChatDoc[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [seenStoryIds, setSeenStoryIds] = useState<Set<string>>(new Set());
   const [draftThreads, setDraftThreads] = useState<ChatThread[]>([]);
 
@@ -81,10 +92,13 @@ export default function App() {
   const [activeCommentPostId, setActiveCommentPostId] = useState<string | null>(null);
   const [createMode, setCreateMode] = useState<'post' | 'story' | null>(null);
   const [dmOpen, setDmOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
   const [dmInitialThreadId, setDmInitialThreadId] = useState<string | null>(null);
   const [inspectedCreatorId, setInspectedCreatorId] = useState<string | null>(null);
   const [sparksOverlayVideoId, setSparksOverlayVideoId] = useState<string | null>(null);
   const [viewerPostId, setViewerPostId] = useState<string | null>(null);
+  const [pendingDeletePostId, setPendingDeletePostId] = useState<string | null>(null);
+  const [isDeletingPost, setIsDeletingPost] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   // Global Sound State & Single Active Home Video State
@@ -123,6 +137,7 @@ export default function App() {
         setRawPosts([]);
         setRawStories([]);
         setRawChats([]);
+        setNotifications([]);
         setAuthReady(true);
         return;
       }
@@ -137,9 +152,23 @@ export default function App() {
             likedPostIds: [],
             followingIds: [],
           };
-          setCurrentUser(existingProfile);
-          setUserPrivate(existingPriv);
+          const resolvedEmail = existingProfile.email || fbUser.email || existingPriv.email || '';
+          const syncedProfile: CreatorProfile = {
+            ...existingProfile,
+            email: resolvedEmail || undefined,
+          };
+          const syncedPriv: UserPrivateState = {
+            ...existingPriv,
+            email: resolvedEmail,
+          };
+          setCurrentUser(syncedProfile);
+          setUserPrivate(syncedPriv);
           setPendingFirebaseUser(null);
+
+          // Automatically persist email onto users/{uid} for legacy accounts
+          if (!existingProfile.email && resolvedEmail) {
+            void saveUserProfile(syncedProfile, syncedPriv).catch(() => {});
+          }
         } else {
           setPendingFirebaseUser(fbUser);
           setCurrentUser(null);
@@ -165,6 +194,7 @@ export default function App() {
           prev
             ? {
                 ...prev,
+                email: mine.email || prev.email,
                 followersCount: mine.followersCount,
                 followingCount: mine.followingCount,
               }
@@ -176,12 +206,14 @@ export default function App() {
     const unsubPosts = subscribeToPosts(currentUser.uid, setRawPosts);
     const unsubStories = subscribeToStories(currentUser.uid, setRawStories);
     const unsubChats = subscribeToChats(currentUser.uid, setRawChats);
+    const unsubNotifs = subscribeToNotifications(currentUser.uid, setNotifications);
 
     return () => {
       unsubUsers();
       unsubPosts();
       unsubStories();
       unsubChats();
+      unsubNotifs();
     };
   }, [currentUser?.uid]);
 
@@ -199,6 +231,7 @@ export default function App() {
     setActiveTab('home');
     setInspectedCreatorId(null);
     setDmOpen(false);
+    setActivityOpen(false);
   };
 
   // Enrich real Firestore collections with the signed-in user's private state (likes, bookmarks, follows, inner circle)
@@ -312,9 +345,11 @@ export default function App() {
     Boolean(inspectedCreatorId) ||
     Boolean(sparksOverlayVideoId) ||
     Boolean(viewerPostId) ||
+    Boolean(pendingDeletePostId) ||
     viewingStoryIndex !== null ||
     Boolean(createMode) ||
-    dmOpen;
+    dmOpen ||
+    activityOpen;
 
   // Single Active Video Observer for Home Feed (prevents overlapping audio & pauses off-screen videos)
   useEffect(() => {
@@ -392,6 +427,7 @@ export default function App() {
   const handleToggleLikePost = async (postId: string) => {
     if (!currentUser) return;
     const alreadyLiked = likedSet.has(postId);
+    const targetPost = posts.find((p) => p.id === postId);
     const nextLiked = alreadyLiked
       ? userPrivate.likedPostIds.filter((id) => id !== postId)
       : [...userPrivate.likedPostIds, postId];
@@ -403,6 +439,15 @@ export default function App() {
       toggleFirestorePostLike(postId, alreadyLiked ? -1 : 1),
       saveUserPrivateOnly(currentUser.uid, nextPriv),
     ]);
+
+    if (!alreadyLiked && targetPost && targetPost.authorId !== currentUser.uid) {
+      void createFirestoreNotification({
+        recipientId: targetPost.authorId,
+        sender: currentUser,
+        type: 'like',
+        postId: targetPost.id,
+      });
+    }
   };
 
   const handleToggleBookmarkPost = async (postId: string) => {
@@ -431,20 +476,78 @@ export default function App() {
     );
   };
 
-  const handleDeletePost = async (postId: string) => {
-    await deleteFirestorePost(postId);
-    showToast('Post deleted');
+  const handleRequestDeletePost = (postId: string) => {
+    setPendingDeletePostId(postId);
+  };
+
+  const handleConfirmDeletePost = async () => {
+    if (!pendingDeletePostId) return;
+    const targetId = pendingDeletePostId;
+    setIsDeletingPost(true);
+    try {
+      await deleteFirestorePost(targetId);
+      if (viewerPostId === targetId) setViewerPostId(null);
+      if (sparksOverlayVideoId === targetId) setSparksOverlayVideoId(null);
+      if (activeCommentPostId === targetId) setActiveCommentPostId(null);
+      setPendingDeletePostId(null);
+      showToast('Deleted successfully');
+    } finally {
+      setIsDeletingPost(false);
+    }
   };
 
   const handlePublishStory = async (story: StoryItem) => {
     await createFirestoreStory(story);
     setActiveTab('home');
-    showToast('Story shared!');
+    showToast('Capsule shared!');
   };
+
+  const handleDeleteStory = async (storyId: string) => {
+    await deleteFirestoreStory(storyId);
+    showToast('Capsule deleted');
+  };
+
+  const handleRecordStoryView = useCallback(
+    (story: StoryItem) => {
+      if (!currentUser || story.authorId === currentUser.uid) return;
+      void recordFirestoreStoryView(story.id, currentUser.uid);
+    },
+    [currentUser],
+  );
+
+  const handleToggleStoryLike = useCallback(
+    (story: StoryItem) => {
+      if (!currentUser) return;
+      const alreadyLiked = (story.likedBy || []).includes(currentUser.uid);
+      void toggleFirestoreStoryLike(story.id, currentUser.uid, !alreadyLiked);
+      if (!alreadyLiked && story.authorId !== currentUser.uid) {
+        void createFirestoreNotification({
+          recipientId: story.authorId,
+          sender: currentUser,
+          type: 'like',
+        });
+      }
+    },
+    [currentUser],
+  );
 
   const handleAddComment = async (postId: string, comment: CommentItem) => {
     await createFirestoreComment(postId, comment);
     showToast(comment.type === 'voice' ? 'Voice note posted!' : 'Comment posted!');
+    const targetPost = posts.find((p) => p.id === postId);
+    if (currentUser && targetPost && targetPost.authorId !== currentUser.uid) {
+      void createFirestoreNotification({
+        recipientId: targetPost.authorId,
+        sender: currentUser,
+        type: 'comment',
+        postId: targetPost.id,
+      });
+    }
+  };
+
+  const handleDeleteComment = async (postId: string, commentId: string) => {
+    await deleteFirestoreComment(postId, commentId);
+    showToast('Comment deleted');
   };
 
   const handleMarkStorySeen = useCallback((storyId: string) => {
@@ -455,6 +558,13 @@ export default function App() {
       return next;
     });
   }, []);
+
+  const handleMarkAllNotificationsRead = useCallback(() => {
+    const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
+    if (unreadIds.length > 0) {
+      void markNotificationsRead(unreadIds);
+    }
+  }, [notifications]);
 
   const handleToggleFollow = async (targetUid: string) => {
     if (!currentUser || targetUid === currentUser.uid) return;
@@ -476,6 +586,14 @@ export default function App() {
       saveUserProfile(nextProfile, nextPriv),
       updateTargetFollowersCount(targetUid, isFollowing ? -1 : 1),
     ]);
+
+    if (!isFollowing) {
+      void createFirestoreNotification({
+        recipientId: targetUid,
+        sender: currentUser,
+        type: 'follow',
+      });
+    }
   };
 
   const handleToggleInnerCircleMember = async (targetUid: string) => {
@@ -540,11 +658,30 @@ export default function App() {
     showToast(`Sent to @${story.authorHandle}`);
   };
 
-  const handleShare = (label: string) => {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      void navigator.clipboard.writeText(window.location.href).catch(() => {});
+  const handleShare = async (post: PostItem, kind: 'post' | 'Spark' = 'post') => {
+    const shareUrl = `${window.location.origin}${window.location.pathname}#${post.id}`;
+    const shareTitle = `VibeGram · @${post.authorHandle}`;
+    const shareText = post.caption
+      ? `@${post.authorHandle}: ${post.caption}`
+      : `Check out @${post.authorHandle}'s ${kind} on VibeGram`;
+
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+      }
     }
-    showToast(`Link copied for ${label}`);
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(shareUrl).catch(() => {});
+    }
+    showToast(`Link copied for @${post.authorHandle}'s ${kind}`);
   };
 
   const handleInspectCreator = (authorId: string) => {
@@ -559,12 +696,19 @@ export default function App() {
   const activeCommentPost = posts.find((p) => p.id === activeCommentPostId) || null;
   const inspectedCreator = creators.find((c) => c.uid === inspectedCreatorId) || null;
   const viewerPost = posts.find((p) => p.id === viewerPostId) || null;
+  const pendingDeletePost = posts.find((p) => p.id === pendingDeletePostId) || null;
+  const unreadNotificationsCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications],
+  );
   const isSparksTabSuspended =
     Boolean(sparksOverlayVideoId) ||
     Boolean(viewerPostId) ||
+    Boolean(pendingDeletePostId) ||
     viewingStoryIndex !== null ||
     Boolean(createMode) ||
-    dmOpen;
+    dmOpen ||
+    activityOpen;
 
   return (
     <div className="min-h-dvh w-full bg-[#020204] text-zinc-100 flex items-center justify-center md:p-5 overflow-hidden">
@@ -660,17 +804,34 @@ export default function App() {
                       </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDmInitialThreadId(null);
-                        setDmOpen(true);
-                      }}
-                      aria-label="Open Direct Messages"
-                      className="relative w-10 h-10 rounded-full bg-white/[0.06] border border-white/10 flex items-center justify-center text-white hover:bg-white/12 active:scale-95 transition-all cursor-pointer shrink-0"
-                    >
-                      <MessageCircle className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setActivityOpen(true)}
+                        aria-label="Open Activity and Notifications"
+                        className="relative w-10 h-10 rounded-full bg-white/[0.06] border border-white/10 flex items-center justify-center text-white hover:bg-white/12 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <Heart className="w-[18px] h-[18px]" />
+                        {unreadNotificationsCount > 0 && (
+                          <span
+                            aria-label={`${unreadNotificationsCount} unread notifications`}
+                            className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-[#FF2E93] ring-2 ring-[#050505] shadow-[0_0_8px_#FF2E93]"
+                          />
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDmInitialThreadId(null);
+                          setDmOpen(true);
+                        }}
+                        aria-label="Open Direct Messages"
+                        className="relative w-10 h-10 rounded-full bg-white/[0.06] border border-white/10 flex items-center justify-center text-white hover:bg-white/12 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <MessageCircle className="w-[18px] h-[18px]" />
+                      </button>
+                    </div>
                   </header>
 
                   {/* 1. REAL VERTICAL CAPSULE STORIES */}
@@ -758,8 +919,8 @@ export default function App() {
                           onToggleLike={handleToggleLikePost}
                           onToggleBookmark={handleToggleBookmarkPost}
                           onOpenComments={(p) => setActiveCommentPostId(p.id)}
-                          onShare={(p) => handleShare(`@${p.authorHandle}'s post`)}
-                          onDeletePost={handleDeletePost}
+                          onShare={(p) => void handleShare(p, p.mediaType === 'video' ? 'Spark' : 'post')}
+                          onDeletePost={handleRequestDeletePost}
                           onInspectCreator={handleInspectCreator}
                         />
                       ))
@@ -778,6 +939,7 @@ export default function App() {
                 />
               ) : activeTab === 'sparks' ? (
                 <SparksView
+                  currentUserId={currentUser.uid}
                   videoPosts={videoSparks}
                   isMuted={isMuted}
                   isSuspended={isSparksTabSuspended}
@@ -786,13 +948,15 @@ export default function App() {
                   onToggleLike={handleToggleLikePost}
                   onToggleBookmark={handleToggleBookmarkPost}
                   onOpenComments={(p) => setActiveCommentPostId(p.id)}
-                  onShare={(p) => handleShare(`@${p.authorHandle}'s Spark`)}
+                  onShare={(p) => void handleShare(p, 'Spark')}
+                  onDeletePost={handleRequestDeletePost}
                   onInspectCreator={handleInspectCreator}
                   onOpenCreate={() => setCreateMode('post')}
                 />
               ) : (
                 <ProfileView
                   profile={currentUser}
+                  userEmail={userPrivate.email}
                   isOwnProfile
                   posts={posts}
                   bookmarkedPosts={posts.filter((p) => p.isBookmarked)}
@@ -827,16 +991,24 @@ export default function App() {
                   className="absolute inset-0 z-50 bg-[#050505]"
                 >
                   <SparksView
+                    currentUserId={currentUser.uid}
                     videoPosts={videoSparks}
                     initialVideoId={sparksOverlayVideoId}
                     isMuted={isMuted}
-                    isSuspended={viewingStoryIndex !== null || Boolean(createMode) || dmOpen}
+                    isSuspended={
+                      Boolean(pendingDeletePostId) ||
+                      viewingStoryIndex !== null ||
+                      Boolean(createMode) ||
+                      dmOpen ||
+                      activityOpen
+                    }
                     onToggleMute={handleToggleMute}
                     onRecordVideoView={handleRecordVideoView}
                     onToggleLike={handleToggleLikePost}
                     onToggleBookmark={handleToggleBookmarkPost}
                     onOpenComments={(p) => setActiveCommentPostId(p.id)}
-                    onShare={(p) => handleShare(`@${p.authorHandle}'s Spark`)}
+                    onShare={(p) => void handleShare(p, 'Spark')}
+                    onDeletePost={handleRequestDeletePost}
                     onInspectCreator={handleInspectCreator}
                     onOpenCreate={() => {
                       setSparksOverlayVideoId(null);
@@ -858,8 +1030,8 @@ export default function App() {
                   onToggleLike={handleToggleLikePost}
                   onToggleBookmark={handleToggleBookmarkPost}
                   onOpenComments={(p) => setActiveCommentPostId(p.id)}
-                  onShare={(p) => handleShare(`@${p.authorHandle}'s post`)}
-                  onDeletePost={handleDeletePost}
+                  onShare={(p) => void handleShare(p, 'post')}
+                  onDeletePost={handleRequestDeletePost}
                   onInspectCreator={handleInspectCreator}
                 />
               )}
@@ -870,9 +1042,15 @@ export default function App() {
                 <StoryViewerModal
                   stories={visibleStories}
                   initialIndex={viewingStoryIndex}
+                  currentUser={currentUser}
+                  creators={creators}
                   onClose={() => setViewingStoryIndex(null)}
                   onMarkSeen={handleMarkStorySeen}
+                  onRecordStoryView={handleRecordStoryView}
+                  onToggleStoryLike={handleToggleStoryLike}
+                  onDeleteStory={handleDeleteStory}
                   onReplyToStory={handleReplyToStory}
+                  onInspectCreator={handleInspectCreator}
                 />
               )}
             </AnimatePresence>
@@ -884,6 +1062,7 @@ export default function App() {
                   currentUser={currentUser}
                   onClose={() => setActiveCommentPostId(null)}
                   onAddComment={handleAddComment}
+                  onDeleteComment={handleDeleteComment}
                 />
               )}
             </AnimatePresence>
@@ -912,6 +1091,34 @@ export default function App() {
                 />
               )}
             </AnimatePresence>
+
+            <AnimatePresence>
+              {activityOpen && (
+                <ActivityModal
+                  notifications={notifications}
+                  posts={posts}
+                  onClose={() => setActivityOpen(false)}
+                  onMarkAllRead={handleMarkAllNotificationsRead}
+                  onOpenPost={handleOpenPostViewer}
+                  onInspectCreator={handleInspectCreator}
+                />
+              )}
+            </AnimatePresence>
+
+            {/* Quick In-App Delete Confirmation for Posts & Sparks */}
+            <ConfirmDialog
+              open={Boolean(pendingDeletePostId)}
+              title={
+                pendingDeletePost?.mediaType === 'video'
+                  ? 'Delete this Spark?'
+                  : 'Delete this post?'
+              }
+              description="This drop will be permanently removed from VibeGram."
+              confirmLabel="Delete"
+              isLoading={isDeletingPost}
+              onConfirm={() => void handleConfirmDeletePost()}
+              onCancel={() => setPendingDeletePostId(null)}
+            />
 
             <AnimatePresence>
               {toast && (
