@@ -185,7 +185,7 @@ export const CommentDrawer: React.FC<CommentDrawerProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col justify-end bg-black/65 backdrop-blur-sm">
+    <div className="absolute inset-0 z-[60] flex flex-col justify-end bg-black/65 backdrop-blur-sm">
       <button
         type="button"
         aria-label="Dismiss comments"

@@ -79,6 +79,7 @@
         "visibility": { "type": "string", "enum": ["public", "inner_circle"] },
         "likesCount": { "type": "number" },
         "commentsCount": { "type": "number" },
+        "views": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -97,6 +98,7 @@
         "visibility",
         "likesCount",
         "commentsCount",
+        "views",
         "createdAt",
         "updatedAt"
       ]

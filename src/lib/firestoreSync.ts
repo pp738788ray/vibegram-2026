@@ -69,6 +69,7 @@ function mapPostDoc(id: string, data: Record<string, unknown>): PostItem {
     visibility: data.visibility === 'inner_circle' ? 'inner_circle' : 'public',
     likesCount: Number(data.likesCount || 0),
     commentsCount: Number(data.commentsCount || 0),
+    views: Number(data.views || 0),
     isLiked: false,
     isBookmarked: false,
     comments: [],
@@ -384,6 +385,7 @@ export async function createFirestorePost(post: PostItem): Promise<void> {
       visibility: post.visibility,
       likesCount: 0,
       commentsCount: 0,
+      views: 0,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -418,6 +420,22 @@ export async function toggleFirestorePostLike(postId: string, delta: 1 | -1): Pr
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function incrementFirestorePostViews(postId: string): Promise<void> {
+  if (!auth.currentUser) return;
+  try {
+    const ref = doc(db, 'posts', postId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    const current = Number(snap.data().views || 0);
+    await updateDoc(ref, {
+      views: current + 1,
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking telemetry: avoid crashing video playback if rules or network reject
   }
 }
 

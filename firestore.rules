@@ -94,7 +94,7 @@ service cloud.firestore {
       && data.keys().hasOnly([
         'id', 'authorId', 'authorHandle', 'authorName', 'authorAvatar', 'authorAura',
         'mediaUrl', 'mediaType', 'caption', 'location', 'mood', 'visibility',
-        'likesCount', 'commentsCount', 'createdAt', 'updatedAt'
+        'likesCount', 'commentsCount', 'views', 'createdAt', 'updatedAt'
       ])
       && isValidId(data.id)
       && isValidId(data.authorId)
@@ -110,6 +110,7 @@ service cloud.firestore {
       && data.visibility in ['public', 'inner_circle']
       && data.likesCount is number && data.likesCount >= 0
       && data.commentsCount is number && data.commentsCount >= 0
+      && (!('views' in data) || (data.views is number && data.views >= 0))
       && data.createdAt is timestamp
       && data.updatedAt is timestamp;
     }
@@ -259,6 +260,7 @@ service cloud.firestore {
         && incoming().authorId == request.auth.uid
         && incoming().likesCount == 0
         && incoming().commentsCount == 0
+        && (!('views' in incoming()) || incoming().views == 0)
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
@@ -276,7 +278,9 @@ service cloud.firestore {
             && (incoming().likesCount == existing().likesCount + 1
               || incoming().likesCount == existing().likesCount - 1)) ||
           (incoming().diff(existing()).affectedKeys().hasOnly(['commentsCount', 'updatedAt'])
-            && incoming().commentsCount == existing().commentsCount + 1)
+            && incoming().commentsCount == existing().commentsCount + 1) ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['views', 'updatedAt'])
+            && incoming().views == (('views' in existing() ? existing().views : 0) + 1))
         );
 
       allow delete: if isVerified() && isValidId(postId) && existing().authorId == request.auth.uid;

@@ -1,10 +1,12 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Bookmark,
+  Eye,
   Heart,
   Lock,
   MessageCircle,
+  Play,
   Send,
   Trash2,
   Volume2,
@@ -17,6 +19,11 @@ import type { PostItem } from '../types';
 interface FeedPostCardProps {
   post: PostItem;
   isOwnPost: boolean;
+  isActiveVideo: boolean;
+  isMuted: boolean;
+  onToggleMute: () => void;
+  onOpenVideoInSparks: (postId: string) => void;
+  onRecordVideoView: (postId: string) => void;
   onToggleLike: (postId: string) => void;
   onToggleBookmark: (postId: string) => void;
   onOpenComments: (post: PostItem) => void;
@@ -28,6 +35,11 @@ interface FeedPostCardProps {
 export const FeedPostCard: React.FC<FeedPostCardProps> = ({
   post,
   isOwnPost,
+  isActiveVideo,
+  isMuted,
+  onToggleMute,
+  onOpenVideoInSparks,
+  onRecordVideoView,
   onToggleLike,
   onToggleBookmark,
   onOpenComments,
@@ -36,8 +48,75 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
   onInspectCreator,
 }) => {
   const [showHeartBurst, setShowHeartBurst] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastTapRef = useRef<number>(0);
+  const singleTapTimerRef = useRef<number | null>(null);
+
+  // Strictly play ONLY when this card is the single active visible video; pause & mute otherwise
+  useEffect(() => {
+    if (post.mediaType !== 'video') return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (isActiveVideo) {
+      video.muted = isMuted;
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          // Browser autoplay policy fallback if not yet interacted
+          video.muted = true;
+          void video.play().catch(() => {});
+        });
+      }
+    } else {
+      video.pause();
+      video.muted = true;
+    }
+  }, [isActiveVideo, isMuted, post.mediaType]);
+
+  // Increment video views after > 2 seconds of continuous active playback
+  useEffect(() => {
+    if (post.mediaType !== 'video' || !isActiveVideo) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    let timer: number | null = null;
+    const clearTimer = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+    const startTimer = () => {
+      clearTimer();
+      timer = window.setTimeout(() => {
+        if (videoRef.current && !videoRef.current.paused) {
+          onRecordVideoView(post.id);
+        }
+      }, 2000);
+    };
+
+    if (!video.paused) {
+      startTimer();
+    }
+    video.addEventListener('playing', startTimer);
+    video.addEventListener('pause', clearTimer);
+
+    return () => {
+      clearTimer();
+      video.removeEventListener('playing', startTimer);
+      video.removeEventListener('pause', clearTimer);
+    };
+  }, [isActiveVideo, onRecordVideoView, post.id, post.mediaType]);
+
+  // Clean up any pending single-tap timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (singleTapTimerRef.current !== null) {
+        window.clearTimeout(singleTapTimerRef.current);
+      }
+    };
+  }, []);
 
   const triggerDoubleTapLike = () => {
     setShowHeartBurst(true);
@@ -49,10 +128,27 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
 
   const handleMediaTap = () => {
     const now = Date.now();
-    if (now - lastTapRef.current < 320) {
-      triggerDoubleTapLike();
-    }
+    const isDoubleTap = now - lastTapRef.current < 260;
     lastTapRef.current = now;
+
+    if (isDoubleTap) {
+      if (singleTapTimerRef.current !== null) {
+        window.clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
+      }
+      triggerDoubleTapLike();
+      return;
+    }
+
+    if (post.mediaType === 'video') {
+      if (singleTapTimerRef.current !== null) {
+        window.clearTimeout(singleTapTimerRef.current);
+      }
+      singleTapTimerRef.current = window.setTimeout(() => {
+        singleTapTimerRef.current = null;
+        onOpenVideoInSparks(post.id);
+      }, 260);
+    }
   };
 
   const commentCount = Math.max(post.commentsCount, post.comments.length);
@@ -121,66 +217,70 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
         </div>
       </div>
 
-      {/* Media Surface with Double-Tap Sunset-Neon Heart Burst */}
+      {/* Media Surface */}
       <div
+        data-feed-video-id={post.mediaType === 'video' ? post.id : undefined}
         onClick={handleMediaTap}
-        onDoubleClick={triggerDoubleTapLike}
-        className="relative mx-2 rounded-[22px] overflow-hidden bg-[#060609] aspect-[4/5] flex items-center justify-center cursor-pointer select-none"
+        className="relative mx-2 rounded-[22px] overflow-hidden bg-[#060609] w-[calc(100%-1rem)] aspect-[4/5] flex items-center justify-center cursor-pointer select-none"
       >
-        {/* Dark blurred ambient backdrop for landscape/tall media */}
-        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-[#060609]" aria-hidden="true">
-          {post.mediaType === 'video' ? (
+        {post.mediaType === 'video' ? (
+          <>
+            {/* Clean edge-to-edge 4:5 fill with zero side pillarboxing on vertical 9:16 videos */}
             <video
+              ref={videoRef}
               src={post.mediaUrl}
-              autoPlay
-              muted
+              muted={isMuted || !isActiveVideo}
               loop
               playsInline
-              tabIndex={-1}
-              className="w-full h-full object-cover scale-110 blur-2xl opacity-45 brightness-50"
+              preload="metadata"
+              className="w-full h-full object-cover"
             />
-          ) : (
+
+            {/* Subtle Spark / Reels indicator badge */}
+            <div className="pointer-events-none absolute top-3 right-3 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/55 backdrop-blur-md border border-white/15 text-[10.5px] font-semibold text-white">
+              <Play className="w-3 h-3 fill-white" />
+              <span>Spark</span>
+            </div>
+
+            {/* Global Sound Toggle */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleMute();
+              }}
+              aria-label={isMuted ? 'Unmute video' : 'Mute video'}
+              className="absolute bottom-3 right-3 z-10 w-10 h-10 rounded-full bg-black/60 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-black/80 active:scale-95 transition-all cursor-pointer"
+            >
+              {isMuted ? (
+                <VolumeX className="w-4 h-4" />
+              ) : (
+                <Volume2 className="w-4 h-4 text-[#FF6B35]" />
+              )}
+            </button>
+          </>
+        ) : (
+          <>
+            {/* Dark blurred ambient backdrop + object-contain for photos (wide 16:9 never crops sides) */}
+            <div
+              className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-[#060609]"
+              aria-hidden="true"
+            >
+              <SafeImage
+                src={post.mediaUrl}
+                alt=""
+                className="w-full h-full object-cover scale-110 blur-2xl opacity-45 brightness-50"
+              />
+              <div className="absolute inset-0 bg-black/35" />
+            </div>
+
             <SafeImage
               src={post.mediaUrl}
-              alt=""
-              className="w-full h-full object-cover scale-110 blur-2xl opacity-45 brightness-50"
+              alt={post.caption || `Post by @${post.authorHandle}`}
+              fallbackLabel={`@${post.authorHandle}`}
+              className="relative z-[1] w-full h-full object-contain"
             />
-          )}
-          <div className="absolute inset-0 bg-black/35" />
-        </div>
-
-        {/* Crisp full-frame foreground media (no side cropping) */}
-        {post.mediaType === 'video' ? (
-          <video
-            src={post.mediaUrl}
-            autoPlay
-            muted={isMuted}
-            loop
-            playsInline
-            className="relative z-[1] w-full h-full object-contain"
-          />
-        ) : (
-          <SafeImage
-            src={post.mediaUrl}
-            alt={post.caption || `Post by @${post.authorHandle}`}
-            fallbackLabel={`@${post.authorHandle}`}
-            className="relative z-[1] w-full h-full object-contain"
-          />
-        )}
-
-        {/* Real Video sound toggle */}
-        {post.mediaType === 'video' && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsMuted((prev) => !prev);
-            }}
-            aria-label={isMuted ? 'Unmute video' : 'Mute video'}
-            className="absolute bottom-3 right-3 z-10 w-10 h-10 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-black/75 transition-colors cursor-pointer"
-          >
-            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4 text-[#FF6B35]" />}
-          </button>
+          </>
         )}
 
         {/* Double-tap Sunset-Neon Pulse Heart Animation */}
@@ -206,8 +306,8 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
       </div>
 
       {/* Action Rail */}
-      <div className="px-4 pt-2.5 pb-1 flex items-center justify-between">
-        <div className="flex items-center gap-1">
+      <div className="px-4 pt-2.5 pb-1 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1 min-w-0">
           <button
             type="button"
             onClick={() => onToggleLike(post.id)}
@@ -216,7 +316,9 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
           >
             <Heart
               className={`w-5 h-5 transition-colors ${
-                post.isLiked ? 'text-[#FF2E93] fill-[#FF2E93] drop-shadow-[0_0_8px_rgba(255,46,147,0.7)]' : 'text-zinc-200'
+                post.isLiked
+                  ? 'text-[#FF2E93] fill-[#FF2E93] drop-shadow-[0_0_8px_rgba(255,46,147,0.7)]'
+                  : 'text-zinc-200'
               }`}
             />
             <span className="text-xs font-mono font-medium tabular-nums">
@@ -244,13 +346,23 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
           >
             <Send className="w-5 h-5" />
           </button>
+
+          {post.mediaType === 'video' && (
+            <span
+              className="inline-flex items-center gap-1 text-[11.5px] font-mono tabular-nums text-zinc-400 pl-1 whitespace-nowrap"
+              aria-label={`${post.views} views`}
+            >
+              <Eye className="w-3.5 h-3.5 text-[#FF6B35]/85" />
+              {formatCount(post.views)} {post.views === 1 ? 'view' : 'views'}
+            </span>
+          )}
         </div>
 
         <button
           type="button"
           onClick={() => onToggleBookmark(post.id)}
           aria-label={post.isBookmarked ? 'Remove bookmark' : 'Bookmark post'}
-          className="min-h-[44px] min-w-[44px] -mr-2 rounded-xl flex items-center justify-center text-zinc-200 hover:bg-white/[0.06] active:scale-95 transition-all cursor-pointer"
+          className="min-h-[44px] min-w-[44px] -mr-2 rounded-xl flex items-center justify-center text-zinc-200 hover:bg-white/[0.06] active:scale-95 transition-all cursor-pointer shrink-0"
         >
           <Bookmark
             className={`w-5 h-5 transition-colors ${

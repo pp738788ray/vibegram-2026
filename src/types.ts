@@ -63,6 +63,7 @@ export interface PostItem {
   visibility: FeedScope;
   likesCount: number;
   commentsCount: number;
+  views: number;
   isLiked: boolean;
   isBookmarked: boolean;
   comments: CommentItem[];

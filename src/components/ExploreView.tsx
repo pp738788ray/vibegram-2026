@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Heart, MessageSquare, Search, UserCheck, UserPlus, X } from 'lucide-react';
+import { Eye, Heart, MessageSquare, Play, Search, UserCheck, UserPlus, X } from 'lucide-react';
 import { formatCount, getAuraBorderStyle } from '../lib/utils';
 import { SafeImage } from './SafeImage';
 import type { CreatorProfile, MoodFilter, PostItem } from '../types';
@@ -11,7 +11,7 @@ interface ExploreViewProps {
   onToggleFollow: (creatorUid: string) => void;
   onInspectCreator: (creatorUid: string) => void;
   onOpenDMWith: (creator: CreatorProfile) => void;
-  onOpenComments: (post: PostItem) => void;
+  onOpenPost: (post: PostItem) => void;
 }
 
 const EXPLORE_MOODS: MoodFilter[] = ['All', 'Desi', 'Music', 'Chill', 'Gaming', 'Tech', 'Aesthetic'];
@@ -23,7 +23,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
   onToggleFollow,
   onInspectCreator,
   onOpenDMWith,
-  onOpenComments,
+  onOpenPost,
 }) => {
   const [query, setQuery] = useState('');
   const [selectedMood, setSelectedMood] = useState<MoodFilter>('All');
@@ -218,16 +218,16 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                 <button
                   key={post.id}
                   type="button"
-                  onClick={() => onOpenComments(post)}
+                  onClick={() => onOpenPost(post)}
                   className="group relative rounded-[22px] overflow-hidden aspect-[4/5] bg-[#0B0B0F] border border-white/8 text-left cursor-pointer"
                 >
                   {post.mediaType === 'video' ? (
                     <video
                       src={post.mediaUrl}
                       muted
-                      loop
                       playsInline
-                      className="w-full h-full object-cover"
+                      preload="metadata"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                   ) : (
                     <SafeImage
@@ -236,6 +236,11 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                   )}
+                  {post.mediaType === 'video' && (
+                    <div className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center">
+                      <Play className="w-3.5 h-3.5 text-white fill-white translate-x-[1px]" />
+                    </div>
+                  )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
                   <div className="absolute bottom-2.5 inset-x-2.5 space-y-0.5">
                     <span className="block text-[11px] font-semibold text-white truncate">
@@ -243,10 +248,17 @@ export const ExploreView: React.FC<ExploreViewProps> = ({
                     </span>
                     <div className="flex items-center justify-between text-[10px] text-zinc-300">
                       <span>{post.mood}</span>
-                      <span className="inline-flex items-center gap-1 font-mono tabular-nums">
-                        <Heart className="w-3 h-3 text-[#FF2E93] fill-[#FF2E93]" />
-                        {formatCount(post.likesCount)}
-                      </span>
+                      {post.mediaType === 'video' ? (
+                        <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+                          <Eye className="w-3 h-3 text-[#FF6B35]" />
+                          {formatCount(post.views)}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+                          <Heart className="w-3 h-3 text-[#FF2E93] fill-[#FF2E93]" />
+                          {formatCount(post.likesCount)}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </button>

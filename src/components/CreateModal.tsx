@@ -106,6 +106,7 @@ export const CreateModal: React.FC<CreateModalProps> = ({
           visibility,
           likesCount: 0,
           commentsCount: 0,
+          views: 0,
           isLiked: false,
           isBookmarked: false,
           comments: [],

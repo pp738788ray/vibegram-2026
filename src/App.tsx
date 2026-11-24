@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
 import { Globe, Lock, MessageCircle, Plus, Sparkles } from 'lucide-react';
@@ -10,6 +10,7 @@ import {
   deleteFirestorePost,
   fetchUserPrivate,
   fetchUserProfile,
+  incrementFirestorePostViews,
   makeChatId,
   reactFirestoreMessage,
   saveUserPrivateOnly,
@@ -35,6 +36,7 @@ import { DirectMessagesModal } from './components/DirectMessagesModal';
 import { ProfileView } from './components/ProfileView';
 import { FloatingBottomDock } from './components/FloatingBottomDock';
 import { SplashScreen } from './components/SplashScreen';
+import { PostViewerModal } from './components/PostViewerModal';
 import type {
   ActiveTab,
   ChatThread,
@@ -81,7 +83,20 @@ export default function App() {
   const [dmOpen, setDmOpen] = useState(false);
   const [dmInitialThreadId, setDmInitialThreadId] = useState<string | null>(null);
   const [inspectedCreatorId, setInspectedCreatorId] = useState<string | null>(null);
+  const [sparksOverlayVideoId, setSparksOverlayVideoId] = useState<string | null>(null);
+  const [viewerPostId, setViewerPostId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Global Sound State & Single Active Home Video State
+  const [isMuted, setIsMuted] = useState(true);
+  const [activeFeedVideoId, setActiveFeedVideoId] = useState<string | null>(null);
+  const [optimisticMinViews, setOptimisticMinViews] = useState<Record<string, number>>({});
+  const homeScrollRef = useRef<HTMLDivElement | null>(null);
+  const countedViewsRef = useRef<Set<string>>(new Set());
+
+  const handleToggleMute = useCallback(() => {
+    setIsMuted((prev) => !prev);
+  }, []);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -206,10 +221,11 @@ export default function App() {
     () =>
       rawPosts.map((p) => ({
         ...p,
+        views: Math.max(p.views, optimisticMinViews[p.id] || 0),
         isLiked: likedSet.has(p.id),
         isBookmarked: bookmarkSet.has(p.id),
       })),
-    [rawPosts, likedSet, bookmarkSet],
+    [rawPosts, optimisticMinViews, likedSet, bookmarkSet],
   );
 
   const stories = useMemo(
@@ -289,6 +305,87 @@ export default function App() {
     () => posts.filter((p) => p.mediaType === 'video'),
     [posts],
   );
+
+  // Suspend Home Feed video playback whenever another tab or full-screen viewer/modal is active
+  const isHomeFeedSuspended =
+    activeTab !== 'home' ||
+    Boolean(inspectedCreatorId) ||
+    Boolean(sparksOverlayVideoId) ||
+    Boolean(viewerPostId) ||
+    viewingStoryIndex !== null ||
+    Boolean(createMode) ||
+    dmOpen;
+
+  // Single Active Video Observer for Home Feed (prevents overlapping audio & pauses off-screen videos)
+  useEffect(() => {
+    if (isHomeFeedSuspended) {
+      setActiveFeedVideoId(null);
+      return;
+    }
+
+    const rootEl = homeScrollRef.current;
+    if (!rootEl) return;
+
+    const videoNodes = rootEl.querySelectorAll<HTMLElement>('[data-feed-video-id]');
+    if (videoNodes.length === 0) {
+      setActiveFeedVideoId(null);
+      return;
+    }
+
+    const visibilityMap = new Map<string, number>();
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const id = (entry.target as HTMLElement).dataset.feedVideoId;
+          if (!id) return;
+          visibilityMap.set(id, entry.isIntersecting ? entry.intersectionRatio : 0);
+        });
+
+        let bestId: string | null = null;
+        let bestRatio = 0.5;
+        visibilityMap.forEach((ratio, id) => {
+          if (ratio >= bestRatio) {
+            bestRatio = ratio;
+            bestId = id;
+          }
+        });
+        setActiveFeedVideoId(bestId);
+      },
+      {
+        root: rootEl,
+        threshold: [0, 0.25, 0.4, 0.5, 0.65, 0.8, 0.95],
+      },
+    );
+
+    videoNodes.forEach((node) => observer.observe(node));
+
+    return () => observer.disconnect();
+  }, [isHomeFeedSuspended, filteredPosts]);
+
+  // Increment Firestore views count once per video per session after > 2 seconds of playback
+  const handleRecordVideoView = useCallback(
+    (postId: string) => {
+      if (countedViewsRef.current.has(postId)) return;
+      countedViewsRef.current.add(postId);
+
+      const currentViews = posts.find((p) => p.id === postId)?.views ?? 0;
+      setOptimisticMinViews((prev) => ({
+        ...prev,
+        [postId]: Math.max(prev[postId] || 0, currentViews + 1),
+      }));
+      void incrementFirestorePostViews(postId);
+    },
+    [posts],
+  );
+
+  const handleOpenPostViewer = useCallback((post: PostItem) => {
+    if (post.mediaType === 'video') {
+      setSparksOverlayVideoId(post.id);
+    } else {
+      setViewerPostId(post.id);
+    }
+  }, []);
 
   // --- Real Firestore Mutations ---
 
@@ -461,6 +558,13 @@ export default function App() {
 
   const activeCommentPost = posts.find((p) => p.id === activeCommentPostId) || null;
   const inspectedCreator = creators.find((c) => c.uid === inspectedCreatorId) || null;
+  const viewerPost = posts.find((p) => p.id === viewerPostId) || null;
+  const isSparksTabSuspended =
+    Boolean(sparksOverlayVideoId) ||
+    Boolean(viewerPostId) ||
+    viewingStoryIndex !== null ||
+    Boolean(createMode) ||
+    dmOpen;
 
   return (
     <div className="min-h-dvh w-full bg-[#020204] text-zinc-100 flex items-center justify-center md:p-5 overflow-hidden">
@@ -502,11 +606,11 @@ export default function App() {
                   onToggleFollow={handleToggleFollow}
                   onToggleInnerCircleMember={handleToggleInnerCircleMember}
                   onOpenDM={handleOpenDMWith}
-                  onOpenPost={(post) => setActiveCommentPostId(post.id)}
+                  onOpenPost={handleOpenPostViewer}
                   onSignOut={handleSignOut}
                 />
               ) : activeTab === 'home' ? (
-                <div className="h-full overflow-y-auto no-scrollbar pb-28">
+                <div ref={homeScrollRef} className="h-full overflow-y-auto no-scrollbar pb-28">
                   {/* Top Header */}
                   <header className="sticky top-0 z-30 h-14 px-4 bg-[#050505]/86 backdrop-blur-xl border-b border-white/[0.06] flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 shrink-0">
@@ -646,6 +750,11 @@ export default function App() {
                           key={post.id}
                           post={post}
                           isOwnPost={post.authorId === currentUser.uid}
+                          isActiveVideo={!isHomeFeedSuspended && activeFeedVideoId === post.id}
+                          isMuted={isMuted}
+                          onToggleMute={handleToggleMute}
+                          onOpenVideoInSparks={(videoId) => setSparksOverlayVideoId(videoId)}
+                          onRecordVideoView={handleRecordVideoView}
                           onToggleLike={handleToggleLikePost}
                           onToggleBookmark={handleToggleBookmarkPost}
                           onOpenComments={(p) => setActiveCommentPostId(p.id)}
@@ -665,11 +774,15 @@ export default function App() {
                   onToggleFollow={handleToggleFollow}
                   onInspectCreator={handleInspectCreator}
                   onOpenDMWith={handleOpenDMWith}
-                  onOpenComments={(p) => setActiveCommentPostId(p.id)}
+                  onOpenPost={handleOpenPostViewer}
                 />
               ) : activeTab === 'sparks' ? (
                 <SparksView
                   videoPosts={videoSparks}
+                  isMuted={isMuted}
+                  isSuspended={isSparksTabSuspended}
+                  onToggleMute={handleToggleMute}
+                  onRecordVideoView={handleRecordVideoView}
                   onToggleLike={handleToggleLikePost}
                   onToggleBookmark={handleToggleBookmarkPost}
                   onOpenComments={(p) => setActiveCommentPostId(p.id)}
@@ -686,7 +799,7 @@ export default function App() {
                   creators={creators}
                   onUpdateProfile={handleUpdateCurrentUser}
                   onToggleInnerCircleMember={handleToggleInnerCircleMember}
-                  onOpenPost={(p) => setActiveCommentPostId(p.id)}
+                  onOpenPost={handleOpenPostViewer}
                   onSignOut={handleSignOut}
                 />
               )}
@@ -696,10 +809,61 @@ export default function App() {
               activeTab={activeTab}
               onSelectTab={(tab) => {
                 setInspectedCreatorId(null);
+                setSparksOverlayVideoId(null);
+                setViewerPostId(null);
                 setActiveTab(tab);
               }}
               onOpenCreate={() => setCreateMode('post')}
             />
+
+            {/* Full-Screen Sparks Viewer Overlay (launched from Home Feed video tap or Profile/Explore video click) */}
+            <AnimatePresence>
+              {sparksOverlayVideoId && videoSparks.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 24 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 24 }}
+                  transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute inset-0 z-50 bg-[#050505]"
+                >
+                  <SparksView
+                    videoPosts={videoSparks}
+                    initialVideoId={sparksOverlayVideoId}
+                    isMuted={isMuted}
+                    isSuspended={viewingStoryIndex !== null || Boolean(createMode) || dmOpen}
+                    onToggleMute={handleToggleMute}
+                    onRecordVideoView={handleRecordVideoView}
+                    onToggleLike={handleToggleLikePost}
+                    onToggleBookmark={handleToggleBookmarkPost}
+                    onOpenComments={(p) => setActiveCommentPostId(p.id)}
+                    onShare={(p) => handleShare(`@${p.authorHandle}'s Spark`)}
+                    onInspectCreator={handleInspectCreator}
+                    onOpenCreate={() => {
+                      setSparksOverlayVideoId(null);
+                      setCreateMode('post');
+                    }}
+                    onClose={() => setSparksOverlayVideoId(null)}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Full-Screen Photo Post Viewer Modal (launched from Profile or Explore grid click) */}
+            <AnimatePresence>
+              {viewerPost && (
+                <PostViewerModal
+                  post={viewerPost}
+                  isOwnPost={viewerPost.authorId === currentUser.uid}
+                  onClose={() => setViewerPostId(null)}
+                  onToggleLike={handleToggleLikePost}
+                  onToggleBookmark={handleToggleBookmarkPost}
+                  onOpenComments={(p) => setActiveCommentPostId(p.id)}
+                  onShare={(p) => handleShare(`@${p.authorHandle}'s post`)}
+                  onDeletePost={handleDeletePost}
+                  onInspectCreator={handleInspectCreator}
+                />
+              )}
+            </AnimatePresence>
 
             <AnimatePresence>
               {viewingStoryIndex !== null && visibleStories.length > 0 && (
@@ -755,7 +919,7 @@ export default function App() {
                   initial={{ opacity: 0, y: -16 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -16 }}
-                  className="pointer-events-none absolute top-16 inset-x-0 z-50 flex justify-center px-4"
+                  className="pointer-events-none absolute top-16 inset-x-0 z-[70] flex justify-center px-4"
                 >
                   <div className="px-4 py-2 rounded-full bg-[#12121A]/95 border border-[#FF2E93]/40 text-xs font-medium text-white shadow-2xl backdrop-blur-xl">
                     {toast}

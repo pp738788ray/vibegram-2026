@@ -4,11 +4,14 @@ import {
   Bookmark,
   Camera,
   Check,
+  Eye,
+  Flame,
   Grid,
   Lock,
   LogOut,
   MessageSquare,
   Mic,
+  Play,
   SlidersHorizontal,
   Square,
   UserCheck,
@@ -57,7 +60,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenPost,
   onSignOut,
 }) => {
-  const [activeTab, setActiveTab] = useState<'posts' | 'saved' | 'circle'>('posts');
+  const [activeTab, setActiveTab] = useState<'drops' | 'sparks' | 'saved' | 'circle'>('drops');
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(profile.displayName);
   const [editHandle, setEditHandle] = useState(profile.handle);
@@ -175,7 +178,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const auraStyle = getAuraBorderStyle(profile.auraBorder);
   const userPosts = posts.filter((p) => p.authorId === profile.uid);
-  const gridItems = activeTab === 'saved' ? bookmarkedPosts : userPosts;
+  const userSparks = userPosts.filter((p) => p.mediaType === 'video');
+  const gridItems =
+    activeTab === 'saved'
+      ? bookmarkedPosts
+      : activeTab === 'sparks'
+        ? userSparks
+        : userPosts;
   const otherCreators = creators.filter((c) => c.uid !== profile.uid);
 
   return (
@@ -455,47 +464,64 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         )}
       </div>
 
-      {/* Content Tabs */}
+      {/* Content Tabs: Drops, Sparks, Saved, Circle */}
       <div className="px-4 pb-3">
-        <div className="grid grid-cols-3 p-1 rounded-2xl bg-white/[0.05] border border-white/8">
+        <div
+          className={`grid ${
+            isOwnProfile ? 'grid-cols-4' : 'grid-cols-2'
+          } p-1 rounded-2xl bg-white/[0.05] border border-white/8 gap-1`}
+        >
           <button
             type="button"
-            onClick={() => setActiveTab('posts')}
-            className={`h-9 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'posts' ? 'bg-white/12 text-white' : 'text-zinc-400'
+            onClick={() => setActiveTab('drops')}
+            className={`h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+              activeTab === 'drops' ? 'bg-white/12 text-white' : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            <Grid className="w-3.5 h-3.5" />
-            Drops
+            <Grid className="w-3.5 h-3.5 shrink-0" />
+            <span>Drops</span>
           </button>
 
-          {isOwnProfile ? (
+          <button
+            type="button"
+            onClick={() => setActiveTab('sparks')}
+            className={`h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+              activeTab === 'sparks'
+                ? 'vibe-gradient-bg text-white shadow-[0_4px_14px_-4px_rgba(255,46,147,0.55)]'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Flame className="w-3.5 h-3.5 shrink-0" />
+            <span>Sparks</span>
+          </button>
+
+          {isOwnProfile && (
             <>
               <button
                 type="button"
                 onClick={() => setActiveTab('saved')}
-                className={`h-9 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                  activeTab === 'saved' ? 'bg-white/12 text-white' : 'text-zinc-400'
+                className={`h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                  activeTab === 'saved'
+                    ? 'bg-white/12 text-white'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                <Bookmark className="w-3.5 h-3.5" />
-                Saved
+                <Bookmark className="w-3.5 h-3.5 shrink-0" />
+                <span>Saved</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveTab('circle')}
-                className={`h-9 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                  activeTab === 'circle' ? 'bg-[#7B2CBF]/40 text-[#E0AAFF]' : 'text-zinc-400'
+                className={`h-9 rounded-xl text-[11.5px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                  activeTab === 'circle'
+                    ? 'bg-[#7B2CBF]/40 text-[#E0AAFF]'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                <Lock className="w-3.5 h-3.5" />
-                Circle
+                <Lock className="w-3.5 h-3.5 shrink-0" />
+                <span>Circle</span>
               </button>
             </>
-          ) : (
-            <div className="col-span-2 flex items-center justify-end pr-3 text-[11px] text-zinc-500">
-              {userPosts.length} {userPosts.length === 1 ? 'drop' : 'drops'}
-            </div>
           )}
         </div>
       </div>
@@ -543,12 +569,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         ) : gridItems.length === 0 ? (
           <div className="rounded-2xl glass-surface p-8 text-center space-y-1.5">
             <p className="text-sm font-medium text-zinc-200">
-              {activeTab === 'saved' ? 'No bookmarked drops yet' : 'No drops shared yet'}
+              {activeTab === 'saved'
+                ? 'No bookmarked drops yet'
+                : activeTab === 'sparks'
+                  ? 'No Sparks videos yet'
+                  : 'No drops shared yet'}
             </p>
             <p className="text-xs text-zinc-500">
               {activeTab === 'saved'
                 ? 'Bookmark posts to keep them in your collection.'
-                : 'Tap the glowing + button in the dock to upload your first drop.'}
+                : activeTab === 'sparks'
+                  ? 'Short videos uploaded via Create (+) will appear here.'
+                  : 'Tap the glowing + button in the dock to upload your first drop.'}
             </p>
           </div>
         ) : (
@@ -558,15 +590,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 key={post.id}
                 type="button"
                 onClick={() => onOpenPost(post)}
-                className="relative rounded-[20px] overflow-hidden aspect-[4/5] bg-[#0B0B10] border border-white/8 cursor-pointer group"
+                className="relative rounded-[20px] overflow-hidden aspect-[4/5] bg-[#0B0B10] border border-white/8 cursor-pointer group text-left"
               >
                 {post.mediaType === 'video' ? (
                   <video
                     src={post.mediaUrl}
                     muted
-                    loop
                     playsInline
-                    className="w-full h-full object-cover"
+                    preload="metadata"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                 ) : (
                   <SafeImage
@@ -575,8 +607,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                 )}
-                <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/85 to-transparent flex items-center justify-between text-[10px] text-zinc-200">
-                  <span>{post.mood}</span>
+
+                {/* Play icon badge on video thumbnails */}
+                {post.mediaType === 'video' && (
+                  <div className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-md">
+                    <Play className="w-3.5 h-3.5 text-white fill-white translate-x-[1px]" />
+                  </div>
+                )}
+
+                <div className="absolute inset-x-0 bottom-0 p-2.5 bg-gradient-to-t from-black/90 via-black/40 to-transparent flex items-center justify-between text-[10.5px] text-zinc-200">
+                  {post.mediaType === 'video' ? (
+                    <span className="inline-flex items-center gap-1 font-mono tabular-nums font-medium text-white">
+                      <Eye className="w-3 h-3 text-[#FF6B35]" />
+                      {formatCount(post.views)}
+                    </span>
+                  ) : (
+                    <span>{post.mood}</span>
+                  )}
                   {post.visibility === 'inner_circle' && (
                     <Lock className="w-3 h-3 text-[#C77DFF]" />
                   )}
